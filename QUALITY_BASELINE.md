@@ -409,7 +409,7 @@ PayPal was added as an alternative payment method alongside the existing credit 
 Implementation surface:
 
 - `pages/checkout/CheckoutPaymentPage.ts` — new public method `payViaPayPal(email, password)` orchestrates: PayPal radio selection → terms acceptance → PayPal SDK CTA click → popup handling (email/Next, password/Log In) → "Agree & Pay Now" → popup close. Sibling `placeOrder()` is bypassed for the PayPal branch (PayPal submits the order from inside the popup).
-- `config/testData.ts` — new exported constant `PAYPAL_CREDENTIALS` with env overrides `TEST_PAYPAL_EMAIL` / `TEST_PAYPAL_PASSWORD`. Defaults: `celine-marchand-sandbox@gmail.com` / `Celine19!` (PayPal sandbox account used by Celine).
+- `config/testData.ts` — new exported constant `PAYPAL_CREDENTIALS` reading `PAYPAL_EMAIL` / `PAYPAL_PASSWORD` from env only. Sprint 1 removed the hardcoded sandbox fallbacks that used to sit here; the accessor now throws a clear "missing env var" error when unset.
 - `tests/celine-purchase.spec.ts` — STEP 6 ("Enter payment information") branches on `TEST_PAYMENT_METHOD`: PayPal calls `payViaPayPal()` and returns immediately; card flow runs `selectCreditCardPayment()` + `fillPaymentInfo()` unchanged. STEP 7 ("Submit order and validate confirmation") skips `placeOrder()` + `handle3DSChallenge()` when paymentMethod is `paypal` (the popup has already submitted), then waits for Order-Confirm exactly as before.
 
 Locator strategy:

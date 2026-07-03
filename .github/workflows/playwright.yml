@@ -1,4 +1,4 @@
-name: Playwright Tests
+name: Playwright
 
 on:
   push:
@@ -7,107 +7,223 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+# Ensure a stale run does not race with a fresh push on the same branch.
+concurrency:
+  group: playwright-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    timeout-minutes: 60
+  # ---------------------------------------------------------------------------
+  # Quality gate — MUST pass on every push and PR.
+  # No secrets required. Runs lint, typecheck, unit tests.
+  # ---------------------------------------------------------------------------
+  quality-gate:
+    name: Quality gate (lint + typecheck + unit)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: npm audit (moderate)
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+  # ---------------------------------------------------------------------------
+  # E2E tests — only on main / develop, on manual dispatch, or when the
+  # `HTTP_AUTH_USER` secret is present. External PRs from forks (which cannot
+  # read secrets) are intentionally skipped so they do not fail with a
+  # misleading "missing env" error.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: E2E (shard ${{ matrix.shard }})
+    needs: quality-gate
+    if: >-
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'))
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: e2e
+
     strategy:
       fail-fast: false
       matrix:
         shard: [1/4, 2/4, 3/4, 4/4]
 
+    env:
+      CI: true
+      # HTTP Basic Auth for the Celine sandbox
+      HTTP_AUTH_USER: ${{ secrets.HTTP_AUTH_USER }}
+      HTTP_AUTH_PASSWORD: ${{ secrets.HTTP_AUTH_PASSWORD }}
+      BASE_URL: ${{ secrets.BASE_URL }}
+      # Regional base URL overrides (optional)
+      BASE_URL_FR: ${{ secrets.BASE_URL_FR }}
+      BASE_URL_US: ${{ secrets.BASE_URL_US }}
+      BASE_URL_JP: ${{ secrets.BASE_URL_JP }}
+      BASE_URL_AU: ${{ secrets.BASE_URL_AU }}
+      BASE_URL_TH: ${{ secrets.BASE_URL_TH }}
+      BASE_URL_NL: ${{ secrets.BASE_URL_NL }}
+      # Regional registered-customer accounts
+      TEST_EMAIL_FR: ${{ secrets.TEST_EMAIL_FR }}
+      TEST_PASSWORD_FR: ${{ secrets.TEST_PASSWORD_FR }}
+      TEST_EMAIL_US: ${{ secrets.TEST_EMAIL_US }}
+      TEST_PASSWORD_US: ${{ secrets.TEST_PASSWORD_US }}
+      TEST_EMAIL_JP: ${{ secrets.TEST_EMAIL_JP }}
+      TEST_PASSWORD_JP: ${{ secrets.TEST_PASSWORD_JP }}
+      TEST_EMAIL_AU: ${{ secrets.TEST_EMAIL_AU }}
+      TEST_PASSWORD_AU: ${{ secrets.TEST_PASSWORD_AU }}
+      TEST_EMAIL_TH: ${{ secrets.TEST_EMAIL_TH }}
+      TEST_PASSWORD_TH: ${{ secrets.TEST_PASSWORD_TH }}
+      TEST_EMAIL_NL: ${{ secrets.TEST_EMAIL_NL }}
+      TEST_PASSWORD_NL: ${{ secrets.TEST_PASSWORD_NL }}
+      # Test card catalog (Adyen / Cybersource sandbox — never a real PAN)
+      TEST_CARD_NUMBER_FR: ${{ secrets.TEST_CARD_NUMBER_FR }}
+      TEST_CARD_EXPIRY_FR: ${{ secrets.TEST_CARD_EXPIRY_FR }}
+      TEST_CARD_CVV_FR: ${{ secrets.TEST_CARD_CVV_FR }}
+      TEST_CARDHOLDER_FR: ${{ secrets.TEST_CARDHOLDER_FR }}
+      TEST_CARD_NUMBER_US: ${{ secrets.TEST_CARD_NUMBER_US }}
+      TEST_CARD_EXPIRY_US: ${{ secrets.TEST_CARD_EXPIRY_US }}
+      TEST_CARD_CVV_US: ${{ secrets.TEST_CARD_CVV_US }}
+      TEST_CARDHOLDER_US: ${{ secrets.TEST_CARDHOLDER_US }}
+      TEST_CARD_NUMBER_JP: ${{ secrets.TEST_CARD_NUMBER_JP }}
+      TEST_CARD_EXPIRY_JP: ${{ secrets.TEST_CARD_EXPIRY_JP }}
+      TEST_CARD_CVV_JP: ${{ secrets.TEST_CARD_CVV_JP }}
+      TEST_CARDHOLDER_JP: ${{ secrets.TEST_CARDHOLDER_JP }}
+      TEST_CARD_SCHEME_AU: ${{ secrets.TEST_CARD_SCHEME_AU }}
+      TEST_CARD_NUMBER_AU: ${{ secrets.TEST_CARD_NUMBER_AU }}
+      TEST_CARD_EXPIRY_AU: ${{ secrets.TEST_CARD_EXPIRY_AU }}
+      TEST_CARD_CVV_AU: ${{ secrets.TEST_CARD_CVV_AU }}
+      TEST_CARDHOLDER_AU: ${{ secrets.TEST_CARDHOLDER_AU }}
+      TEST_CARD_NUMBER_TH: ${{ secrets.TEST_CARD_NUMBER_TH }}
+      TEST_CARD_EXPIRY_TH: ${{ secrets.TEST_CARD_EXPIRY_TH }}
+      TEST_CARD_CVV_TH: ${{ secrets.TEST_CARD_CVV_TH }}
+      TEST_CARDHOLDER_TH: ${{ secrets.TEST_CARDHOLDER_TH }}
+      TEST_CARD_NUMBER_NL: ${{ secrets.TEST_CARD_NUMBER_NL }}
+      TEST_CARD_EXPIRY_NL: ${{ secrets.TEST_CARD_EXPIRY_NL }}
+      TEST_CARD_CVV_NL: ${{ secrets.TEST_CARD_CVV_NL }}
+      TEST_CARDHOLDER_NL: ${{ secrets.TEST_CARDHOLDER_NL }}
+      # Alternative payment methods (sandbox accounts, provisioned per env)
+      PAYPAL_EMAIL: ${{ secrets.PAYPAL_EMAIL }}
+      PAYPAL_PASSWORD: ${{ secrets.PAYPAL_PASSWORD }}
+      AFTERPAY_AU_EMAIL: ${{ secrets.AFTERPAY_AU_EMAIL }}
+      AFTERPAY_AU_PASSWORD: ${{ secrets.AFTERPAY_AU_PASSWORD }}
+      # PII policy: reports keep emails MASKED in CI unless the environment
+      # explicitly opts in via the `e2e` protected environment.
+      INCLUDE_PII_IN_REPORT: 'false'
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Guard — HTTP_AUTH_USER must be provisioned
+        run: |
+          if [ -z "${HTTP_AUTH_USER}" ] || [ -z "${BASE_URL}" ]; then
+            echo "::error::E2E secrets are not provisioned in the current environment."
+            echo "::error::Configure HTTP_AUTH_USER / HTTP_AUTH_PASSWORD / BASE_URL under 'Environments → e2e' in repository settings."
+            exit 1
+          fi
+
+      - name: Install dependencies (npm ci)
         run: npm ci
 
-      - name: Install Playwright Browsers
+      - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Run Playwright tests
-        env:
-          CI: true
-          # Add your environment variables here
-          # HTTP_AUTH_USER: ${{ secrets.HTTP_AUTH_USER }}
-          # HTTP_AUTH_PASSWORD: ${{ secrets.HTTP_AUTH_PASSWORD }}
-          # BASE_URL: ${{ secrets.BASE_URL }}
+      - name: Run Playwright (shard ${{ matrix.shard }})
         run: npx playwright test --shard=${{ matrix.shard }}
 
-      - name: Upload Playwright Report
-        uses: actions/upload-artifact@v4
+      - name: Upload blob report (shard ${{ matrix.shard }})
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.shard }}
+          name: blob-report-${{ strategy.job-index }}
+          path: blob-report/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload HTML report (shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ strategy.job-index }}
           path: playwright-report/
           retention-days: 30
+          if-no-files-found: ignore
 
-      - name: Upload Test Results
-        uses: actions/upload-artifact@v4
+      - name: Upload raw test-results (shard ${{ matrix.shard }})
         if: failure()
+        uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.shard }}
+          name: test-results-${{ strategy.job-index }}
           path: test-results/
-          retention-days: 30
+          retention-days: 14
+          if-no-files-found: ignore
 
+  # ---------------------------------------------------------------------------
+  # Merge Playwright blob reports from all shards into one HTML report.
+  # ---------------------------------------------------------------------------
   merge-reports:
-    # Merge reports from all shards
-    if: always()
-    needs: [test]
+    name: Merge Playwright reports
+    if: always() && needs.e2e.result != 'skipped'
+    needs: [e2e]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Install dependencies (npm ci)
         run: npm ci
 
-      - name: Download all reports
+      - name: Download blob reports
         uses: actions/download-artifact@v4
         with:
-          path: all-reports/
-          pattern: playwright-report-*
+          path: all-blob-reports
+          pattern: blob-report-*
+          merge-multiple: true
 
-      - name: Merge reports
-        run: npx playwright merge-reports --reporter html ./all-reports
+      - name: Merge blob reports → HTML
+        run: npx playwright merge-reports --reporter html ./all-blob-reports
 
-      - name: Upload merged report
+      - name: Upload merged HTML report
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-merged
           path: playwright-report/
           retention-days: 30
-
-      - name: Comment PR with results
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const reportPath = 'playwright-report/index.html';
-
-            let comment = '## 🎭 Playwright Test Results\n\n';
-            comment += '✅ Tests completed! ';
-            comment += `[View Full Report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\n`;
-            comment += '**Shards completed:** 4/4\n';
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
+          if-no-files-found: ignore

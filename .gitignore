@@ -2,11 +2,26 @@
 # DEPENDENCIES
 # ============================================
 node_modules/
-package-lock.json
+# NOTE: package-lock.json is NOW tracked (see Sprint 1 / README §Installation).
+# Do not re-add it here without justification.
 yarn.lock
 pnpm-lock.yaml
 .pnp
 .pnp.js
+
+# ============================================
+# CLAUDE CODE / LOCAL AI TOOLING
+# ============================================
+# .claude/settings.local.json is machine-local — it may contain personal
+# permission lists, shell command history and internal file paths.
+# Only .claude/settings.json (shared, sanitized) should ever be committed.
+.claude/settings.local.json
+.claude/*.local.json
+.claude/logs/
+
+# Accidentally-checked-in Windows installer scripts (e.g. %TEMP%install-qwen.bat)
+%TEMP%*
+%TEMP%*.bat
 
 # ============================================
 # PLAYWRIGHT - TEST ARTIFACTS

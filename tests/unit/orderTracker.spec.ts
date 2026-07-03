@@ -127,23 +127,62 @@ test.describe('OrderTracker Unit Tests', () => {
     expect(pastOrders).toHaveLength(0);
   });
 
-  test('save() should handle metadata correctly', async () => {
-    await tracker.save('META-001', {
-      testName: 'Metadata Test',
-      displayedOrderNumber: 'DISPLAY-001',
-      metadata: {
-        email: 'user@test.com',
-        total: '1299.00',
-        items: 3,
-        browser: 'Chromium',
-        duration: 85000,
-      },
-    });
+  test('save() should handle metadata correctly (default PII policy: masked)', async () => {
+    // Ensure INCLUDE_PII_IN_REPORT is NOT set for this assertion.
+    const priorPii = process.env.INCLUDE_PII_IN_REPORT;
+    delete process.env.INCLUDE_PII_IN_REPORT;
 
-    const orders = await tracker.getAll();
-    expect(orders[0].metadata?.email).toBe('user@test.com');
-    expect(orders[0].metadata?.duration).toBe(85000);
-    expect(orders[0].displayedOrderNumber).toBe('DISPLAY-001');
+    try {
+      await tracker.save('META-001', {
+        testName: 'Metadata Test',
+        displayedOrderNumber: 'DISPLAY-001',
+        metadata: {
+          email: 'user@test.com',
+          total: '1299.00',
+          items: 3,
+          browser: 'Chromium',
+          duration: 85000,
+        },
+      });
+
+      const orders = await tracker.getAll();
+      // Sprint 1 PII policy: the raw email must NOT be persisted by default.
+      expect(orders[0].metadata?.email).toBeUndefined();
+      // Masked + hashed forms are populated deterministically.
+      expect(orders[0].metadata?.emailMasked).toBe('us***@***.com');
+      expect(orders[0].metadata?.emailHash).toMatch(/^[0-9a-f]{10}$/);
+      // Non-PII fields are preserved as-is.
+      expect(orders[0].metadata?.duration).toBe(85000);
+      expect(orders[0].metadata?.total).toBe('1299.00');
+      expect(orders[0].metadata?.items).toBe(3);
+      expect(orders[0].metadata?.browser).toBe('Chromium');
+      expect(orders[0].displayedOrderNumber).toBe('DISPLAY-001');
+    } finally {
+      if (priorPii !== undefined) process.env.INCLUDE_PII_IN_REPORT = priorPii;
+    }
+  });
+
+  test('save() preserves raw email when INCLUDE_PII_IN_REPORT=true', async () => {
+    const priorPii = process.env.INCLUDE_PII_IN_REPORT;
+    process.env.INCLUDE_PII_IN_REPORT = 'true';
+
+    try {
+      await tracker.save('META-002', {
+        testName: 'PII opt-in Test',
+        metadata: { email: 'user@test.com' },
+      });
+
+      const orders = await tracker.getAll();
+      expect(orders[0].metadata?.email).toBe('user@test.com');
+      expect(orders[0].metadata?.emailMasked).toBe('us***@***.com');
+      expect(orders[0].metadata?.emailHash).toMatch(/^[0-9a-f]{10}$/);
+    } finally {
+      if (priorPii === undefined) {
+        delete process.env.INCLUDE_PII_IN_REPORT;
+      } else {
+        process.env.INCLUDE_PII_IN_REPORT = priorPii;
+      }
+    }
   });
 
   test('should handle sequential saves correctly', async () => {
