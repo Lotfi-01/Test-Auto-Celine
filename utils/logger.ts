@@ -168,3 +168,27 @@ export function maskEmailForLog(value: string): string {
   const extension = domainPart.includes('.') ? domainPart.slice(domainPart.lastIndexOf('.')) : '';
   return `${visibleLocal}***@***${extension}`;
 }
+
+/**
+ * Return a short deterministic hash of an email for correlation across
+ * systems (orders, test-results, logs) WITHOUT revealing the address.
+ * Uses SHA-256 truncated to 10 hex chars — enough entropy for a small
+ * corpus of test accounts, and irreversible in practice.
+ */
+export function hashEmailForCorrelation(value: string): string {
+  const trimmed = (value || '').trim().toLowerCase();
+  if (!trimmed) return '';
+  // Lazy require to keep the logger dependency footprint minimal.
+
+  const crypto = require('crypto') as typeof import('crypto');
+  return crypto.createHash('sha256').update(trimmed).digest('hex').slice(0, 10);
+}
+
+/**
+ * PII policy accessor. Full emails are only written when the operator has
+ * explicitly opted in via INCLUDE_PII_IN_REPORT=true. Anything else masks
+ * or hashes. See `.env.example`.
+ */
+export function includePiiInReport(): boolean {
+  return process.env.INCLUDE_PII_IN_REPORT === 'true';
+}

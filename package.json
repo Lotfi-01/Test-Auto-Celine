@@ -5,9 +5,11 @@
   "description": "Celine E2E Playwright tests across regions (FR/US/JP/AU/TH).",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "lint": "eslint . && npm run lint:silent-catch",
+    "lint:silent-catch": "node scripts/check-silent-catch-baseline.js",
+    "lint:silent-catch:update": "node scripts/check-silent-catch-baseline.js --update",
     "format:check": "prettier --check .",
-    "validate": "npm run typecheck && npm run lint && npm run format:check && npm run test:unit && npm audit",
+    "validate": "npm run typecheck && npm run lint && npm run format:check && npm run test:unit && npm audit --audit-level=moderate",
     "preview:email": "node scripts/preview-email-report.js",
     "test:unit": "playwright test --project=unit",
     "test:e2e": "playwright test tests/celine-purchase.spec.ts",
@@ -16,7 +18,7 @@
   },
   "dependencies": {
     "dotenv": "16.6.1",
-    "nodemailer": "8.0.7"
+    "nodemailer": "8.0.11"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

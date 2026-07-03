@@ -1,6 +1,14 @@
 import { devices } from '@playwright/test';
 import { TEST_CONFIG } from './testConfig';
-import { TEST_DATA_FR, TEST_DATA_US, TEST_DATA_JP, TEST_DATA_AU, TEST_DATA_TH, TEST_DATA_NL, RegionalTestData } from './testData';
+import {
+  TEST_DATA_FR,
+  TEST_DATA_US,
+  TEST_DATA_JP,
+  TEST_DATA_AU,
+  TEST_DATA_TH,
+  TEST_DATA_NL,
+  RegionalTestData,
+} from './testData';
 
 /**
  * Regional Configuration
@@ -24,7 +32,7 @@ export const REGIONS: Record<string, RegionConfig> = {
   FR: {
     code: 'fr',
     name: 'celine-fr',
-    baseURL: process.env.BASE_URL!,
+    baseURL: process.env.BASE_URL || '',
     locale: 'fr-FR',
     timezone: 'Europe/Paris',
     testData: TEST_DATA_FR,
@@ -32,7 +40,7 @@ export const REGIONS: Record<string, RegionConfig> = {
   US: {
     code: 'us',
     name: 'celine-us',
-    baseURL: process.env.BASE_URL_US || process.env.BASE_URL!,
+    baseURL: process.env.BASE_URL_US || process.env.BASE_URL || '',
     locale: 'en-US',
     timezone: 'America/New_York',
     testData: TEST_DATA_US,
@@ -40,7 +48,7 @@ export const REGIONS: Record<string, RegionConfig> = {
   JP: {
     code: 'jp',
     name: 'celine-jp',
-    baseURL: process.env.BASE_URL_JP || process.env.BASE_URL!,
+    baseURL: process.env.BASE_URL_JP || process.env.BASE_URL || '',
     locale: 'ja-JP',
     timezone: 'Asia/Tokyo',
     testData: TEST_DATA_JP,
@@ -48,7 +56,7 @@ export const REGIONS: Record<string, RegionConfig> = {
   AU: {
     code: 'au',
     name: 'celine-au',
-    baseURL: process.env.BASE_URL_AU || process.env.BASE_URL!,
+    baseURL: process.env.BASE_URL_AU || process.env.BASE_URL || '',
     locale: 'en-AU',
     timezone: 'Australia/Sydney',
     testData: TEST_DATA_AU,
@@ -56,7 +64,7 @@ export const REGIONS: Record<string, RegionConfig> = {
   TH: {
     code: 'th',
     name: 'celine-th',
-    baseURL: process.env.BASE_URL_TH || process.env.BASE_URL!,
+    baseURL: process.env.BASE_URL_TH || process.env.BASE_URL || '',
     locale: 'en-TH',
     timezone: 'Asia/Bangkok',
     testData: TEST_DATA_TH,
@@ -64,7 +72,7 @@ export const REGIONS: Record<string, RegionConfig> = {
   NL: {
     code: 'nl',
     name: 'celine-nl',
-    baseURL: process.env.BASE_URL_NL || process.env.BASE_URL!,
+    baseURL: process.env.BASE_URL_NL || process.env.BASE_URL || '',
     locale: 'en-NL',
     timezone: 'Europe/Amsterdam',
     testData: TEST_DATA_NL,
