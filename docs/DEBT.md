@@ -9,12 +9,10 @@ grandir : chaque item doit passer par un ticket avec un propriétaire.
 ## 1. Silent `.catch(() => {})` (F-R2)
 
 **Contexte** : la revue initiale estimait ~180 occurrences par un
-`grep .catch\(` non filtré ; la **mesure exacte** produite par
+`grep .catch\(` non filtré ; la mesure exacte est produite par
 `scripts/check-silent-catch-baseline.js` (regex stricte sur
-`.catch(() => {})` / `.catch(async () => {})` à corps vide) recense
-**82 occurrences réparties sur 8 fichiers**. C'est la vérité de référence
-utilisée par le guard-rail — l'estimation initiale de la revue est
-considérée obsolète.
+`.catch(() => {})` / `.catch(async () => {})` à corps vide) et
+matérialisée dans `scripts/silent-catch.baseline.json`.
 
 Sprint 1 a :
 
@@ -27,39 +25,57 @@ Sprint 1 a :
   dette : `npm run lint:silent-catch:update` puis committer le diff sur
   `scripts/silent-catch.baseline.json`.
 
-**Mesure du baseline** (source de vérité — `scripts/silent-catch.baseline.json`,
-figé le **2026-07-03**) :
+Sprint 2 a **traité 22 occurrences sur 5 fichiers** (BasePage,
+selectorStrategy, CheckoutLoginPage, CelineProductPage — entièrement
+liquidés — plus un extract côté spec via la refonte de l'extraction du
+numéro de commande). Le pattern retenu est `catch((error) => logger.debug(msg))`
+avec le contexte de l'étape optionnelle, jamais un log de valeur sensible.
 
-| Fichier                                  | Occurrences | Action attendue                                      |
-| ---------------------------------------- | ----------: | ---------------------------------------------------- |
-| `pages/checkout/CheckoutShippingPage.ts` |          28 | Refactor : logger warn + surface l'erreur ou throw   |
-| `pages/checkout/CheckoutPaymentPage.ts`  |          23 | Idem — surtout PayPal / Afterpay / Adyen 3DS         |
-| `pages/CelineProductPage.ts`             |           7 | Extraire les fallbacks JS click en helpers testables |
-| `tests/celine-purchase.spec.ts`          |           7 | Remplacer par assertions `expect` explicites         |
-| `utils/selectorStrategy.ts`              |           6 | Documenter chaque tolérance                          |
-| `pages/BasePage.ts`                      |           5 | Aligner sur la politique « catch = log »             |
-| `pages/checkout/CheckoutLoginPage.ts`    |           4 | Séparer cas guest vs registered, propager            |
-| `utils/formHelper.ts`                    |           2 | Documenter les deux tolérances scroll/clear          |
-| **Total**                                |      **82** |                                                      |
+**Évolution du baseline** :
+
+| Sprint | Total | Fichiers concernés | Δ          |
+| ------ | ----: | -----------------: | ---------- |
+| 1      |    82 |                  8 | (baseline) |
+| 2      |    60 |                  4 | **−22**    |
+
+**État du baseline après Sprint 2** (source de vérité —
+`scripts/silent-catch.baseline.json`, figé le **2026-07-03**) :
+
+| Fichier                                  | Sprint 1 | Sprint 2 |   Δ |
+| ---------------------------------------- | -------: | -------: | --: |
+| `pages/checkout/CheckoutShippingPage.ts` |       28 |       28 |   0 |
+| `pages/checkout/CheckoutPaymentPage.ts`  |       23 |       23 |   0 |
+| `tests/celine-purchase.spec.ts`          |        7 |        7 |   0 |
+| `utils/formHelper.ts`                    |        2 |        2 |   0 |
+| `pages/CelineProductPage.ts`             |        7 |    **0** |  −7 |
+| `utils/selectorStrategy.ts`              |        6 |    **0** |  −6 |
+| `pages/BasePage.ts`                      |        5 |    **0** |  −5 |
+| `pages/checkout/CheckoutLoginPage.ts`    |        4 |    **0** |  −4 |
+| **Total**                                |   **82** |   **60** | −22 |
+
+Les 60 occurrences restantes sont concentrées à 85 % dans
+`CheckoutShippingPage.ts` et `CheckoutPaymentPage.ts` — hors périmètre
+Sprint 2 par consigne (fichiers trop gros, refactor massif interdit). À
+traiter Sprint 3 dans un lot dédié après extraction préalable de sous-classes
+(`PickupDialogHandler`, `CivilitySelector`, `AddressFormFiller` côté
+Shipping ; helpers PayPal/Afterpay/3DS côté Payment).
+
+Les 7 occurrences restantes dans `tests/celine-purchase.spec.ts` sont des
+`.catch(() => {})` autour d'actions de fallback UI (zip OK button, force
+click shipping label). Elles seront traitées Sprint 3 en même temps que le
+découpage du mégatest.
 
 Fichiers qui n'apparaissent PAS dans le baseline (0 silent catch strict) mais
-qui sont dans la liste `HISTORICAL_SILENT_CATCH_FILES` d'ESLint parce qu'ils
-contiennent d'autres patterns tolérés (`try {} catch {}` vides, ou catches
-avec paramètre non utilisé) : `utils/adyenHelper.ts`, `utils/cybersourceHelper.ts`,
-`utils/fileLock.ts`, `utils/orderTracker.ts`, `utils/pageHelpers.ts`,
-`utils/testResultTracker.ts`, `pages/CelineHomePage.ts`. Ces fichiers doivent
-rester dans l'override ESLint (leur dette est d'un autre type — cf. la revue
-initiale) mais n'entrent pas dans le baseline silent-catch.
+qui restent dans l'override ESLint parce qu'ils contiennent d'autres patterns
+tolérés (`try {} catch {}` vides, ou catches avec paramètre non utilisé) :
+`utils/adyenHelper.ts`, `utils/cybersourceHelper.ts`, `utils/fileLock.ts`,
+`utils/orderTracker.ts`, `utils/pageHelpers.ts`, `utils/testResultTracker.ts`,
+`pages/CelineHomePage.ts`.
 
 > Estimation initiale obsolète : la revue mentionnait
-> `CheckoutShippingPage.ts=74`, `CheckoutPaymentPage.ts=49`,
-> `celine-purchase.spec.ts=20`, `CheckoutLoginPage.ts=11`,
-> `CelineProductPage.ts=10`, `BasePage.ts=8`, `pageHelpers.ts=2`,
-> `adyenHelper.ts=2`, `cybersourceHelper.ts=1`, `orderTracker.ts=1`,
-> `testResultTracker.ts=1`, `fileLock.ts=4`. Ces chiffres provenaient d'un
-> `grep .catch\(` **non filtré** (matchait aussi `.catch((err) => ...)`,
-> `.catch((e) => { log(...) })`, etc.). Ne pas les utiliser pour piloter le
-> Sprint 2 — seule la mesure baseline ci-dessus fait foi.
+> `CheckoutShippingPage.ts=74`, `CheckoutPaymentPage.ts=49`, etc. Ces chiffres
+> provenaient d'un `grep .catch\(` **non filtré** (matchait aussi
+> `.catch((err) => log(...))`). Seule la mesure baseline ci-dessus fait foi.
 
 **Politique cible** :
 
@@ -83,9 +99,48 @@ await x.doSomething(); // propager
 
 ## 2. `waitForTimeout` en dur (F-R1)
 
-**Contexte** : 34 occurrences, cumul >10s par test. Sprint 1 ne les touche pas.
+**Contexte** : la revue initiale comptait 34 occurrences (`grep waitForTimeout`
+comment-aware). La mesure exacte des `await *.waitForTimeout(...)` réels
+donnait **32** au démarrage du Sprint 2. Sprint 2 a remplacé les sleeps
+sécuritaires par des signaux DOM/URL/response.
 
-À traiter en Sprint 2 avec la refonte des attentes web-first.
+**Évolution `waitForTimeout` (calls réels dans pages/tests/utils)** :
+
+| Sprint | Total | Détail                                                                                          |
+| ------ | ----: | ----------------------------------------------------------------------------------------------- |
+| 1      |    32 | 13 Shipping, 7 Payment, 5 spec, 5 Login, 2 Product                                              |
+| 2      |    28 | idem sauf : spec −2 (JP/NL loading + form-panel padding), Login −2 (padding autour du Tab blur) |
+| Δ      |    −4 |                                                                                                 |
+
+Remplacements Sprint 2 :
+
+- `tests/celine-purchase.spec.ts` (JP/NL) : `waitForTimeout(1000)` →
+  `Promise.race([label.shipping-method-option.waitFor(visible),
+formPanel.waitFor(attached)])` avec deadline 8s. Signal réel.
+- `tests/celine-purchase.spec.ts` (post form-panel) : `waitForTimeout(300)` →
+  supprimé. Le `formPanel.waitFor({state:'visible'})` juste au-dessus est le
+  vrai signal, le 300 ms était du padding.
+- `pages/checkout/CheckoutLoginPage.ts` (autour du Tab blur email→pw) :
+  `waitForTimeout(100)` × 2 → supprimé. Les `isVisible({timeout:2500})` qui
+  suivent sont des attentes web-first suffisantes.
+
+**Sleeps restants (28) — classés** :
+
+- `tests/celine-purchase.spec.ts` (3) : ne pas toucher — 2 marqués
+  `TODO Sprint 3` (Adyen/Cybersource hydration), 1 dans la boucle de polling
+  du numéro de commande (traité indirectement en Phase 5 mais la boucle
+  interne reste stable).
+- `pages/checkout/CheckoutLoginPage.ts` (3) : polling intervals dans les
+  boucles `for` (100 ms × 3). Signaux propres non disponibles côté Celine —
+  refactor plus profond en Sprint 3.
+- `pages/CelineProductPage.ts` (2) : 20 ms + 50 ms — inspections rapides
+  post-clic size/panel close. Non-critique en durée cumulée, on laisse.
+- `pages/checkout/CheckoutShippingPage.ts` (13) + `CheckoutPaymentPage.ts` (7)
+  : **hors périmètre Sprint 2** (fichiers trop gros). À traiter Sprint 3
+  après refactor.
+
+À traiter en Sprint 3 après extraction préalable de sous-classes côté
+Shipping/Payment (voir §3).
 
 ---
 
