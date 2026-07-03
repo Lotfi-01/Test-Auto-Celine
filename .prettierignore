@@ -1,0 +1,15 @@
+node_modules
+test-results
+playwright-report
+coverage
+dist
+build
+*.log
+package-lock.json
+
+# Out-of-scope for the Prettier-scope-1 lot (config/, fixtures/, tests/, utils/,
+# playwright.config.ts, global-teardown.ts, eslint.config.js, package.json, tsconfig.json
+# have been formatted; the items below were intentionally left out and stay ignored).
+test-data
+/README.md
+/SECURITY_NOTES.md
