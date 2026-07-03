@@ -193,14 +193,20 @@ export class CheckoutLoginPage extends BasePage {
       return false;
     }
 
-    // Give the form time to react to email (many sites reveal pw field for known accounts)
-    await this.page.waitForTimeout(100);
+    // Trigger blur / tab to help reveal the password section (email blur often
+    // triggers an account lookup). Purely optional — the isVisible polls below
+    // are the real signal.
+    await this.loginEmailInput.press('Tab').catch((error) => {
+      this.log(
+        `Tab blur skipped: ${error instanceof Error ? error.message : String(error)}`,
+        'debug'
+      );
+    });
 
-    // Trigger blur / tab to help reveal password section (email blur often triggers account lookup)
-    await this.loginEmailInput.press('Tab').catch(() => {});
-    await this.page.waitForTimeout(100);
-
-    // Check password OR the SIGN IN submit button as indicator of registered login form
+    // Previous implementation slept 100ms *before* pressing Tab and another
+    // 100ms *after*. Both were pure padding — the `isVisible({ timeout: 2500 })`
+    // call below is a proper web-first wait that already tolerates async
+    // account-lookup latency.
     let passwordVisible = await this.passwordInput.isVisible({ timeout: 2500 }).catch(() => false);
     let signInVisible = await this.loginSubmitButton.isVisible({ timeout: 2000 }).catch(() => false);
 
@@ -235,8 +241,17 @@ export class CheckoutLoginPage extends BasePage {
           return false;
         }
       } else {
-        // SIGN IN visible but pw not yet (rare) — attempt fill anyway
-        await this.fillPassword(password).catch(() => {});
+        // Rare branch: SIGN IN button already visible but password field not
+        // yet rendered. We attempt the fill anyway (Celine sometimes reveals
+        // the input asynchronously). A failure here is non-fatal — the
+        // subsequent SIGN IN click will surface a validation error if pw was
+        // truly missing. Log at warn to keep the anomaly visible.
+        await this.fillPassword(password).catch((error) => {
+          this.log(
+            `Optimistic password fill failed: ${error instanceof Error ? error.message : String(error)}`,
+            'warn'
+          );
+        });
       }
 
       const submitted = await this.clickLoginSubmit();
@@ -249,7 +264,10 @@ export class CheckoutLoginPage extends BasePage {
       const { closeAllSidePanels } = await import('../../utils/selectorStrategy');
       await closeAllSidePanels(this.page, { timeout: 50, force: true });
 
-      // Wait for login to complete (pw hidden or shipping appears)
+      // Wait for login to complete: either the password field is hidden
+      // (Celine transitioned to the next step) or the shipping submit is
+      // visible (registered flow with prefilled address). Both are acceptable
+      // end-states — a timeout on either is logged but does not block.
       try {
         await this.passwordInput.waitFor({ state: 'hidden', timeout: TIMEOUTS.medium });
       } catch {
@@ -257,16 +275,30 @@ export class CheckoutLoginPage extends BasePage {
           .locator('#submitShippingBtn, [class*="shipping"], button#submitShippingBtn')
           .first()
           .waitFor({ state: 'visible', timeout: TIMEOUTS.medium })
-          .catch(() => {});
+          .catch((error) => {
+            this.log(
+              `Neither password-hidden nor shipping-visible signal caught after SIGN IN: ${error instanceof Error ? error.message : String(error)}`,
+              'warn'
+            );
+          });
       }
 
       await this.waitForDomContent();
       this.logSuccess('Registered customer logged in successfully');
 
-      // For registered users, address is often pre-filled; click the shipping submit if visible
-      const submitShippingBtn = this.page.locator('#submitShippingBtn, button.submit-shipping, button[name="submit"][value="submit-shipping"]');
+      // For registered users, address is often pre-filled; click the shipping
+      // submit if visible. If the click itself throws (button covered, etc.),
+      // log warn and rely on the shipping page's own submit flow later.
+      const submitShippingBtn = this.page.locator(
+        '#submitShippingBtn, button.submit-shipping, button[name="submit"][value="submit-shipping"]'
+      );
       if (await submitShippingBtn.isVisible({ timeout: 2500 }).catch(() => false)) {
-        await submitShippingBtn.click({ force: true }).catch(() => {});
+        await submitShippingBtn.click({ force: true }).catch((error) => {
+          this.log(
+            `Optimistic submit-shipping click failed: ${error instanceof Error ? error.message : String(error)}`,
+            'warn'
+          );
+        });
         this.logSuccess('Clicked submit shipping button after registered login');
         await this.page.waitForTimeout(100);
       }

@@ -213,7 +213,11 @@ export class CelineProductPage {
               if (closeBtn) closeBtn.click();
             });
         })
-        .catch(() => {});
+        .catch((error) => {
+          logger.debug(
+            `[Product] side-panel JS close pass skipped: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
       await this.page.waitForTimeout(50);
 
       // After size selection, the variant ADD TO BAG button is in the DOM with `hidden`.
@@ -233,15 +237,26 @@ export class CelineProductPage {
 
       logger.step('[Product] Clicking ADD TO CART');
 
-      // Close the site-locator popin right before clicking add to cart (this overlay blocks the button)
+      // Close the site-locator popin right before clicking add to cart
+      // (this overlay would otherwise block the click on the ATC button).
       const { CLOSE_SITE_LOCATOR_STRATEGY } = await import('../utils/selectorStrategy');
-      await CLOSE_SITE_LOCATOR_STRATEGY.clickFirst(this.page, { timeout: 100, force: true }).catch(() => {});
+      await CLOSE_SITE_LOCATOR_STRATEGY.clickFirst(this.page, { timeout: 100, force: true }).catch((error) => {
+        logger.debug(
+          `[Product] site-locator close skipped: ${error instanceof Error ? error.message : String(error)}`
+        );
+      });
 
-      // Close the newsletter popin only if it appears, before Add to cart
+      // Close the newsletter popin only if it appears, before Add to cart.
       // Selector: button with data-osidepaneltoggle-panel="newsletter"
-      const newsletterPopin = this.page.locator('button.a-btn.a-btn--as-link.o-side-panel__close[data-osidepaneltoggle-panel="newsletter"]');
+      const newsletterPopin = this.page.locator(
+        'button.a-btn.a-btn--as-link.o-side-panel__close[data-osidepaneltoggle-panel="newsletter"]'
+      );
       if (await newsletterPopin.isVisible({ timeout: 100 }).catch(() => false)) {
-        await newsletterPopin.click({ force: true }).catch(() => {});
+        await newsletterPopin.click({ force: true }).catch((error) => {
+          logger.debug(
+            `[Product] newsletter popin close skipped: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
       }
 
       // noWaitAfter: true — Celine sometimes triggers a "scheduled navigation" on click
@@ -302,7 +317,11 @@ export class CelineProductPage {
       // .click() can hang indefinitely at "performing click action" — the page becomes
       // unresponsive while the JS handler runs. Dispatch the click via in-page JS
       // so we sidestep Playwright's internal action tracking entirely.
-      await this.buyNowButton.scrollIntoViewIfNeeded().catch(() => {});
+      await this.buyNowButton.scrollIntoViewIfNeeded().catch((error) => {
+        logger.debug(
+          `[Product] scrollIntoView on BUY NOW skipped: ${error instanceof Error ? error.message : String(error)}`
+        );
+      });
       await this.buyNowButton.evaluate((el: HTMLElement) => el.click());
 
       logger.success('[Product] Buy Now clicked - redirecting to checkout');
@@ -323,10 +342,15 @@ export class CelineProductPage {
     const { closeAllSidePanels } = await import('../utils/selectorStrategy');
     await closeAllSidePanels(this.page, { timeout: 50, force: true });
 
-    // Wait for mini-cart to appear after adding product
-    // Wait for mini-cart badge or icon to update
+    // Wait for mini-cart badge or icon to update. If it does not appear in
+    // TIMEOUTS.short, VIEW_CART_STRATEGY below has its own fallback (direct
+    // navigation to /cart) — no need to bubble this timeout up.
     await this.page.waitForLoadState('domcontentloaded');
-    await this.cartIcon.waitFor({ state: 'visible', timeout: TIMEOUTS.short }).catch(() => {});
+    await this.cartIcon.waitFor({ state: 'visible', timeout: TIMEOUTS.short }).catch((error) => {
+      logger.debug(
+        `[Product] mini-cart icon not visible after ATC: ${error instanceof Error ? error.message : String(error)}`
+      );
+    });
 
     // Try to click the view cart button in mini-cart
     const clicked = await VIEW_CART_STRATEGY.clickFirst(this.page, {
@@ -370,9 +394,16 @@ export class CelineProductPage {
       await checkoutBtn.waitFor({ state: 'visible', timeout: TIMEOUTS.medium });
       await checkoutBtn.click({ timeout: TIMEOUTS.medium });
 
+      // The click above already triggers the navigation; the URL wait is a
+      // soft confirmation only. A timeout does not invalidate the flow — the
+      // spec re-asserts on the checkout URL right after this call.
       await this.page
         .waitForURL(/checkout|paiement/i, { timeout: TEST_CONFIG.timeouts.navigation })
-        .catch(() => {});
+        .catch((error) => {
+          logger.debug(
+            `[Product] post-checkout URL wait skipped: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
     } catch {
       logger.warn('[Product] Checkout button not clickable from cart, using direct navigation fallback');
       // Fallback: direct goto with proper locale
@@ -389,17 +420,20 @@ export class CelineProductPage {
    * Does NOT close side panels first.
    */
   async tryCheckoutFromMiniCart(): Promise<boolean> {
-    const checkoutBtn = this.page
-      .locator(SELECTORS.CART.CHECKOUT_BUTTON)
-      .first();
+    const checkoutBtn = this.page.locator(SELECTORS.CART.CHECKOUT_BUTTON).first();
 
     try {
       await checkoutBtn.waitFor({ state: 'visible', timeout: 1500 });
       await checkoutBtn.click({ timeout: 2000 });
 
+      // Soft URL confirmation — same rationale as `proceedToCheckout()` above.
       await this.page
         .waitForURL(/checkout|paiement/i, { timeout: TEST_CONFIG.timeouts.navigation })
-        .catch(() => {});
+        .catch((error) => {
+          logger.debug(
+            `[Product] mini-cart post-click URL wait skipped: ${error instanceof Error ? error.message : String(error)}`
+          );
+        });
 
       return true;
     } catch {

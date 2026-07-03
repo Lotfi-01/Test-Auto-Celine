@@ -102,7 +102,15 @@ export abstract class BasePage {
 
     try {
       if (scrollIntoView) {
-        await locator.scrollIntoViewIfNeeded().catch(() => {});
+        // Optional pre-step — a failure here is not fatal; the click below is
+        // the invariant. Log at debug so the trail exists without breaking the
+        // caller's contract (safeClick can still return true on click success).
+        await locator.scrollIntoViewIfNeeded().catch((error) => {
+          this.log(
+            `scrollIntoViewIfNeeded skipped: ${error instanceof Error ? error.message : String(error)}`,
+            'debug'
+          );
+        });
       }
 
       await locator.click({ timeout, force });
@@ -169,11 +177,25 @@ export abstract class BasePage {
       await locator.waitFor({ state: 'visible', timeout });
 
       if (scrollIntoView) {
-        await locator.scrollIntoViewIfNeeded().catch(() => {});
+        // Optional — the fill itself is the invariant.
+        await locator.scrollIntoViewIfNeeded().catch((error) => {
+          this.log(
+            `scrollIntoViewIfNeeded skipped: ${error instanceof Error ? error.message : String(error)}`,
+            'debug'
+          );
+        });
       }
 
       if (clearFirst) {
-        await locator.clear().catch(() => {});
+        // Some inputs cannot be cleared (readonly wrappers) but still accept
+        // fill(). Log at debug and keep going — the value verification below
+        // catches a real mismatch.
+        await locator.clear().catch((error) => {
+          this.log(
+            `clear() skipped: ${error instanceof Error ? error.message : String(error)}`,
+            'debug'
+          );
+        });
       }
 
       await locator.fill(value, { timeout });
@@ -225,16 +247,31 @@ export abstract class BasePage {
   /**
    * Wait for page to stabilize after an action (DOM loaded).
    * Prefer using specific selector waits when possible.
+   *
+   * A timeout here is not fatal — the caller decides what to do next (typically
+   * moves on to a targeted waitFor / expect). We log at debug so a slow load
+   * still leaves a trace without breaking the flow.
    */
   protected async waitForNetworkIdle(timeout: number = TIMEOUTS.medium): Promise<void> {
-    await this.page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
+    await this.page.waitForLoadState('domcontentloaded', { timeout }).catch((error) => {
+      this.log(
+        `waitForLoadState('domcontentloaded') timed out: ${error instanceof Error ? error.message : String(error)}`,
+        'debug'
+      );
+    });
   }
 
   /**
-   * Wait for DOM content to be loaded
+   * Wait for DOM content to be loaded (see `waitForNetworkIdle` for the
+   * catch-and-log rationale).
    */
   protected async waitForDomContent(timeout: number = 10000): Promise<void> {
-    await this.page.waitForLoadState('domcontentloaded', { timeout }).catch(() => {});
+    await this.page.waitForLoadState('domcontentloaded', { timeout }).catch((error) => {
+      this.log(
+        `waitForLoadState('domcontentloaded') timed out: ${error instanceof Error ? error.message : String(error)}`,
+        'debug'
+      );
+    });
   }
 
   /**

@@ -17,6 +17,7 @@ import { getTestDataForProject, PAYPAL_CREDENTIALS, AFTERPAY_AU_CREDENTIALS } fr
 import { testResultTracker } from '../utils/testResultTracker';
 import { maskEmailForLog } from '../utils/logger';
 import { closeAllSidePanels } from '../utils/selectorStrategy';
+import { findOrderNumberOnConfirmationPage } from '../utils/orderNumber';
 
 test.describe('Celine E2E - Optimized', () => {
   // HTTP credentials are now loaded from .env via TEST_CONFIG
@@ -187,7 +188,14 @@ Running optimized test for region: ${testInfo.project.name}`);
       // sandbox password fallback: a missing password now throws a clear
       // "missing env var" error from testData rather than silently attempting
       // a well-known credential.
-      await checkoutPage.login.loginAsRegistered(testData.email, testData.password!);
+      const loginProceeded = await checkoutPage.login.loginAsRegistered(
+        testData.email,
+        testData.password!
+      );
+      expect(
+        loginProceeded,
+        'Login step (registered or fallback-to-guest) must complete without error'
+      ).toBe(true);
 
       console.log(`   Registered login done: ${maskEmailForLog(testData.email)}`);
 
@@ -234,10 +242,15 @@ Running optimized test for region: ${testInfo.project.name}`);
       console.log(`   Delivery mode: ${isPickup ? 'PICK-UP IN STORE (Click & Collect)' : 'home'}`);
 
       if (isPickup) {
-        // Click & Collect: switch to PICK-UP tab → select first store (auto-shown) → fill purchaser-info dialog → submit
-        // (Guest always needs this; registered with saved address may still need to choose pickup tab + purchaser info.)
-        await checkoutPage.shipping.selectClickAndCollect();
-        await checkoutPage.shipping.fillPickupAddressForm({
+        // Click & Collect: switch to PICK-UP tab → select first store (auto-shown)
+        // → fill purchaser-info dialog → submit.
+        const pickupSelected = await checkoutPage.shipping.selectClickAndCollect();
+        expect(
+          pickupSelected,
+          'Click & Collect tab + store must be selected before opening the purchaser dialog'
+        ).toBe(true);
+
+        const pickupFilled = await checkoutPage.shipping.fillPickupAddressForm({
           title: addr.title,
           firstName: addr.firstName,
           lastName: addr.lastName,
@@ -250,6 +263,7 @@ Running optimized test for region: ${testInfo.project.name}`);
           phone: addr.phone,
           phonePrefix: addr.phonePrefix,
         });
+        expect(pickupFilled, 'Pickup purchaser dialog must be filled and submitted').toBe(true);
       } else {
         // Standard delivery: postal code + shipping method + address
         // Detect if we can skip manual form (registered user with saved/pre-filled address)
@@ -291,8 +305,19 @@ Running optimized test for region: ${testInfo.project.name}`);
           // Exclude shippingBillingForms — we are about to open/fill the form inside it.
           await closeAllSidePanels(page, { timeout: 100, force: true, exclude: ['shippingBillingForms'] });
 
-          // Give time for shipping options to load after postal code (important for JP/NL)
-          await page.waitForTimeout(1000);
+          // Wait for a real signal that the shipping options finished loading
+          // after the postal code lookup: either the delivery-method label
+          // appears, or the shipping form panel becomes attached. Replaces the
+          // 1s blind waitForTimeout previously used to soak JP/NL latency.
+          await Promise.race([
+            page.locator('label.shipping-method-option').first().waitFor({ state: 'visible', timeout: 8000 }),
+            page
+              .locator('section[data-osidepanel-name="shippingBillingForms"]')
+              .waitFor({ state: 'attached', timeout: 8000 }),
+          ]).catch(() => {
+            /* both signals timed out — the fallback path below (form-open
+               attempt + fillShippingAddress) handles this case and will log. */
+          });
 
           // Robust open for shipping form (handles cases where label is hidden or slow to appear, e.g. JP)
           const formPanel = page.locator('section[data-osidepanel-name="shippingBillingForms"]');
@@ -328,13 +353,17 @@ Running optimized test for region: ${testInfo.project.name}`);
           await formPanel.waitFor({ state: 'visible', timeout: 8000 }).catch(() => {
             console.log('   Form panel still not visible, proceeding to fill anyway');
           });
-          await page.waitForTimeout(300);
+          // Previously: waitForTimeout(300) here. Removed — `formPanel.waitFor`
+          // above is the real signal; the extra 300ms was pure padding.
 
           // Select title (civility) before filling the form, as required by the site
           await checkoutPage.shipping.selectTitle(addr.title);
 
-          // Now the form is open, fill the address directly (no close, no early submit)
-          await checkoutPage.shipping.fillShippingAddress({
+          // Now the form is open, fill the address directly (no close, no early submit).
+          // Sprint 2 hardening: every step that returns a boolean success
+          // signal is asserted explicitly. The previous flow ignored the
+          // return value and silently continued into payment on failure.
+          const addressFilled = await checkoutPage.shipping.fillShippingAddress({
             firstName: addr.firstName,
             lastName: addr.lastName,
             address: addr.street,
@@ -346,14 +375,28 @@ Running optimized test for region: ${testInfo.project.name}`);
             firstNameKatakana: addr.firstNameKatakana,
             lastNameKatakana: addr.lastNameKatakana,
           });
-          await checkoutPage.shipping.selectCountry(addr.country);
+          expect(addressFilled, 'Shipping address form must be filled successfully').toBe(true);
+
+          const countrySelected = await checkoutPage.shipping.selectCountry(addr.country);
+          expect(
+            countrySelected,
+            `Country dropdown must be set to "${addr.country}" before submitting the address`
+          ).toBe(true);
+
+          // continueToShipping() returns void on success and throws on
+          // failure — the try/catch inside surfaces the failure message.
           await checkoutPage.shipping.continueToShipping();
         }
       }
 
       // Consolidated close before payment (reduced calls)
       await closeAllSidePanels(page, { timeout: 200, force: true, exclude: ['shippingBillingForms'] });
-      await checkoutPage.shipping.continueToPayment();
+
+      // continueToPayment() throws with a clear message when the transition
+      // to /payment does not happen — we surface that failure via `expect`
+      // instead of silently proceeding.
+      const reachedPayment = await checkoutPage.shipping.continueToPayment();
+      expect(reachedPayment, 'Checkout must transition to the payment step after shipping').toBe(true);
 
       console.log('   Shipping address completed');
     });
@@ -365,7 +408,10 @@ Running optimized test for region: ${testInfo.project.name}`);
     await checkoutPage.payment.waitForCreditCardOptionReady(8000);
     console.log('   Payment method options ready');
 
-    // Extra settle for registered + pickup flows (payment methods can take a bit to be interactive)
+    // Extra settle for registered + pickup flows (payment methods can take a bit to be interactive).
+    // TODO Sprint 3: replace with stable signal when available — right now the
+    // credit-card radio can be visible but not yet event-bound; no clean
+    // hydration event is emitted by Celine's checkout.
     await page.waitForTimeout(300);
 
     const paymentMethod = (process.env.TEST_PAYMENT_METHOD || 'card').toLowerCase();
@@ -392,6 +438,8 @@ Running optimized test for region: ${testInfo.project.name}`);
         paymentMethodSelected = await checkoutPage.payment.selectCreditCardPayment();
         if (!paymentMethodSelected) {
           console.log('   First select attempt did not confirm selection, retrying...');
+          // TODO Sprint 3: replace with stable signal when available — retry
+          // sleep is Adyen/Cybersource hydration guard; no stable event today.
           await page.waitForTimeout(500);
           paymentMethodSelected = await checkoutPage.payment.selectCreditCardPayment();
         }
@@ -447,29 +495,26 @@ Running optimized test for region: ${testInfo.project.name}`);
         .catch(() => {});
       console.log(`   Post-payment URL: ${page.url()}`);
 
-      // 2) Extract order number from the confirmation page.
-      //    Use page.evaluate (fast) to scan the full page text in one call.
-      const maxPoll = 60_000;
-      const startPoll = Date.now();
-      while (Date.now() - startPoll < maxPoll && !orderNumber) {
-        const text = await page.evaluate(() => document.body?.textContent || '').catch(() => '');
-        const m = text.match(/#([A-Z0-9]+(?:-\d+)?)/);
-        if (m) {
-          orderNumber = m[1];
-          break;
-        }
-        await page.waitForTimeout(120);
-      }
-
-      if (orderNumber) {
+      // 2) Extract order number from the confirmation page — Sprint 2 hardening:
+      //    use the locator-first helper instead of scanning `document.body`.
+      //    The helper polls `SELECTORS.CHECKOUT.CONFIRMATION.ORDER_NUMBER`,
+      //    then the confirmation title, then a scoped confirmation container.
+      //    See `utils/orderNumber.ts` and unit tests in
+      //    `tests/unit/orderNumber.spec.ts`. Throws with a clear message
+      //    (locators tried + URL) when nothing is found, which the assertion
+      //    below surfaces to the report.
+      try {
+        orderNumber = await findOrderNumberOnConfirmationPage(page, { timeoutMs: 60_000 });
         console.log(`   Order number captured: ${orderNumber}`);
         exitAfterOrder = true;
-      } else {
-        console.log('   Order number not found after confirmation wait');
+      } catch (err) {
+        console.log(`   Order number not found: ${(err as Error).message}`);
         console.log(`   Current URL: ${page.url()}`);
       }
 
-      expect(orderNumber).toBeTruthy();
+      // Explicit assertion — the test fails cleanly if extraction did not
+      // succeed. We log a masked identifier only (see policy in DEBT.md).
+      expect(orderNumber, 'Order number must be extracted from the confirmation page').toBeTruthy();
     });
 
     // STEP 8: Save order information (only once, then exit)

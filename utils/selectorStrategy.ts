@@ -202,19 +202,29 @@ export async function closeAllSidePanels(
 
   const shouldClose = (name: string) => !exclude.includes(name);
 
-  // Close known disruptive panels first using dedicated strategies (fast and targeted)
-  // Use .catch without logging to reduce noise
+  // Best-effort helper: each side-panel close is optional (the panel may not
+  // be open at all). We used to swallow silently; now we log at debug so a
+  // truly puzzling flow still leaves a diagnostic trail.
+  const swallowOptional = (label: string) => (error: unknown) => {
+    logger.debug(
+      `closeAllSidePanels: ${label} skipped — ${error instanceof Error ? error.message : String(error)}`
+    );
+  };
+
+  // Close known disruptive panels first using dedicated strategies (fast and targeted).
   if (shouldClose('site-locator')) {
-    await CLOSE_SITE_LOCATOR_STRATEGY.clickFirst(page, { timeout, force }).catch(() => {});
+    await CLOSE_SITE_LOCATOR_STRATEGY.clickFirst(page, { timeout, force }).catch(swallowOptional('site-locator'));
   }
   if (shouldClose('newsletter')) {
-    await CLOSE_NEWSLETTER_STRATEGY.clickFirst(page, { timeout, force }).catch(() => {});
+    await CLOSE_NEWSLETTER_STRATEGY.clickFirst(page, { timeout, force }).catch(swallowOptional('newsletter'));
   }
   if (shouldClose('shippingBillingForms')) {
-    await CLOSE_SHIPPING_BILLING_PANEL_STRATEGY.clickFirst(page, { timeout, force }).catch(() => {});
+    await CLOSE_SHIPPING_BILLING_PANEL_STRATEGY.clickFirst(page, { timeout, force }).catch(
+      swallowOptional('shippingBillingForms')
+    );
   }
 
-  // Targeted close for other common panels
+  // Targeted close for other common panels.
   const badPanels = ['sitemap', 'changelogin', 'social', 'giftoption'];
   for (const panel of badPanels) {
     if (shouldClose(panel)) {
@@ -222,17 +232,20 @@ export async function closeAllSidePanels(
         .locator(`section[data-osidepanel-name="${panel}"] button[data-osidepanel-close]`)
         .first()
         .click({ timeout: Math.min(timeout, 300), force })
-        .catch(() => {});
+        .catch(swallowOptional(`panel:${panel}`));
     }
   }
-  // We do a final pass but only on panels that are not excluded.
-  const genericClose = page.locator('.o-side-panel__close, button[aria-label*="close" i], button[aria-label*="fermer" i], [data-osidepanel-close]').first();
+  // Final pass on panels that are not excluded.
+  const genericClose = page.locator(
+    '.o-side-panel__close, button[aria-label*="close" i], button[aria-label*="fermer" i], [data-osidepanel-close]'
+  ).first();
   if (genericClose) {
-    await genericClose.click({ timeout: Math.min(timeout, 300), force: true }).catch(() => {});
+    await genericClose
+      .click({ timeout: Math.min(timeout, 300), force: true })
+      .catch(swallowOptional('generic-close'));
   }
 
-  // Best-effort: wait briefly for the most common disruptive panels to actually disappear
-  // This improves robustness without adding significant time.
+  // Best-effort: wait briefly for the most common disruptive panels to actually disappear.
   await Promise.all(
     ['newsletter', 'sitemap', 'changelogin', 'site-locator']
       .filter((n) => shouldClose(n))
@@ -241,7 +254,7 @@ export async function closeAllSidePanels(
           .locator(`section[data-osidepanel-name="${name}"], [data-osidepaneltoggle-panel="${name}"]`)
           .first()
           .waitFor({ state: 'detached', timeout: Math.min(timeout, 400) })
-          .catch(() => {})
+          .catch(swallowOptional(`detach-wait:${name}`))
       )
   );
 }
