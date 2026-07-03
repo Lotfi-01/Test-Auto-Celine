@@ -103,201 +103,33 @@ export class CheckoutPaymentPage extends BasePage {
       return true;
     }
 
+    // For Adyen (NL/FR etc.): ALWAYS force CREDIT CARD selection.
+    // Do not trust "visible" or pre-checked state — especially after registered/pickup flows.
+    await this.forceCreditCardSelection();
+
     const adyenPanel = this.page.locator('.adyen-checkout__card-input, .adyen-checkout__payment-method--card').first();
-    const rbScheme = this.page.locator('#rb_scheme');
+    const rbScheme = this.page.locator(SELECTORS.CHECKOUT.PAYMENT.CREDIT_CARD_INPUT).first();
 
-    // For Adyen (FR/NL/JP/AU etc.): do NOT assume the container being visible means the method is chosen.
-    // Guest flows (after pickup or address submit) often show the payment section with CC not active,
-    // while registered saved-address flows sometimes default it.
-    // Check the radio explicitly; if not checked we fall through to force the #lb_scheme click.
-    const adyenVisible = await adyenPanel.isVisible({ timeout: 1500 }).catch(() => false);
-    const rbChecked = await rbScheme.isChecked().catch(() => false);
+    // Poll a bit for the selection to take effect (registered + pickup can be slow)
+    let confirmed = false;
+    for (let i = 0; i < 5; i++) {
+      const adyenVisible = await adyenPanel.isVisible({ timeout: 500 }).catch(() => false);
+      const rbChecked = await rbScheme.isChecked().catch(() => false);
+      if (adyenVisible && rbChecked) {
+        confirmed = true;
+        break;
+      }
+      await this.page.waitForTimeout(300);
+    }
 
-    if (adyenVisible && rbChecked) {
-      this.logSuccess('Credit card panel already visible and radio checked (pre-selected)');
+    if (confirmed) {
+      this.logSuccess('Credit card confirmed selected (panel visible + radio checked)');
       await this.waitForAdyenForm();
       return true;
     }
 
-    if (adyenVisible && !rbChecked) {
-      this.log('Adyen panel visible but CREDIT CARD radio not checked — will force selection (typical for guest)', 'info');
-      // fall through to explicit selection below
-    }
-
-    // Direct and robust selection using the exact CREDIT CARD label the user provided:
-    // <label class="m-field__label m-field__label--radio" id="lb_scheme" for="rb_scheme" data-orig-label="Cards">CREDIT CARD</label>
-    // This is now the preferred path for guest flows.
-    try {
-      if (this.page.isClosed()) {
-        this.log('Page is closed before payment selection', 'warn');
-        return false;
-      }
-      const exactCreditLabel = this.page.locator('#lb_scheme');
-      const hasLabel = (await exactCreditLabel.count().catch(() => 0)) > 0 ||
-                       (await exactCreditLabel.isVisible({ timeout: 800 }).catch(() => false));
-      if (hasLabel) {
-        await exactCreditLabel.scrollIntoViewIfNeeded().catch(() => {});
-        await exactCreditLabel.click({ force: true, timeout: 1500 }).catch(() => {});
-        this.logSuccess('Clicked exact CREDIT CARD label (#lb_scheme) with force');
-        await this.page.waitForTimeout(150);
-
-        // Force check the associated radio + events (critical for some Adyen integrations)
-        const radio = this.page.locator('#rb_scheme');
-        await radio.check({ force: true }).catch(() => {});
-        await radio.evaluate((el: any) => {
-          try {
-            el.checked = true;
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('click', { bubbles: true }));
-          } catch {}
-        }).catch(() => {});
-
-        // Verify it took effect
-        const nowChecked = await radio.isChecked().catch(() => false);
-        if (nowChecked) {
-          this.logSuccess('CREDIT CARD radio is now checked');
-        }
-        await this.waitForAdyenForm();
-        return true;
-      }
-    } catch (e: unknown) {
-      const msg = (e as Error)?.message || String(e);
-      if (msg.includes('closed')) {
-        this.log('Page closed during payment selection', 'warn');
-        return false;
-      }
-      this.log(`Direct click on #lb_scheme failed: ${msg}`, 'warn');
-    }
-
-    const creditCardLabelByFor = this.page.locator('label[for="rb_scheme"]').first();
-    const creditCardInput = this.page.locator('#rb_scheme').first();
-
-    const waitForAdyenPanel = async () =>
-      adyenPanel
-        .waitFor({ state: 'visible', timeout: TIMEOUTS.element })
-        .then(() => true)
-        .catch(() => false);
-
-    let panelVisible = false;
-
-    // Strategy 0 (new, for JP/NL and localized UIs): generic role-based radio
-    if (!panelVisible) {
-      try {
-        const ccByRole = this.page.getByRole('radio', {
-          name: /credit|carte|クレジット|カード|credit card|carte bancaire|creditcard/i,
-        }).first();
-        if (await ccByRole.isVisible({ timeout: 2000 }).catch(() => false)) {
-          const isChecked = await ccByRole.isChecked().catch(() => false);
-          if (!isChecked) {
-            await ccByRole.click({ force: true, timeout: TIMEOUTS.element }).catch(() => {});
-          }
-          this.logSuccess('Credit card radio clicked via accessible name (role)');
-          panelVisible = await waitForAdyenPanel();
-        }
-      } catch {
-        this.log('Role-based credit card radio not found, trying scan', 'info');
-      }
-    }
-
-    // Strategy 0b: scan radios inside payment area for card-related label (very robust for JP/NL localized UIs)
-    if (!panelVisible) {
-      try {
-        const paymentContainer = this.page.locator('form, [class*="payment"], [id*="payment"], .adyen-checkout__payment-methods, .checkout__payment').first();
-        const radios = paymentContainer.locator('input[type="radio"]');
-        const radioCount = await radios.count().catch(() => 0);
-        for (let i = 0; i < radioCount; i++) {
-          const radio = radios.nth(i);
-          const id = await radio.getAttribute('id').catch(() => '');
-          let labelText = await radio.getAttribute('aria-label').catch(() => '') || '';
-          if (id) {
-            const associatedLabel = await this.page.locator(`label[for="${id}"]`).textContent().catch(() => '');
-            if (associatedLabel) labelText = associatedLabel;
-          }
-          if (/credit|carte|カード|クレジット|credit card/i.test(labelText)) {
-            await radio.click({ force: true, timeout: TIMEOUTS.element }).catch(() => {});
-            this.logSuccess(`Credit card radio selected by scanning payment area (label: ${labelText.trim()})`);
-            panelVisible = await waitForAdyenPanel();
-            break;
-          }
-        }
-      } catch {
-        this.log('Radio scan in payment area failed', 'info');
-      }
-    }
-
-    // Fallback 1: click label[for="rb_scheme"] (attribute-based, no force).
-    if (!panelVisible) {
-      try {
-        await creditCardLabelByFor.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-        await creditCardLabelByFor.scrollIntoViewIfNeeded().catch(() => {});
-        await creditCardLabelByFor.click({ timeout: TIMEOUTS.element });
-        this.logSuccess('Credit card label (label[for="rb_scheme"]) clicked');
-        panelVisible = await waitForAdyenPanel();
-      } catch {
-        this.log('label[for="rb_scheme"] not actionable, trying to expand payment section', 'info');
-        await this.expandPaymentSection();
-        try {
-          await creditCardLabelByFor.waitFor({ state: 'visible', timeout: TIMEOUTS.medium });
-          await creditCardLabelByFor.click({ timeout: TIMEOUTS.element });
-          this.logSuccess('Credit card label (label[for="rb_scheme"]) clicked after expand');
-          panelVisible = await waitForAdyenPanel();
-        } catch {
-          this.log('label[for="rb_scheme"] still not actionable after expand', 'info');
-        }
-      }
-    }
-
-    // Fallback 2: legacy input click with force (last resort).
-    if (!panelVisible) {
-      try {
-        await creditCardInput.waitFor({ state: 'attached', timeout: TIMEOUTS.element });
-        await creditCardInput.click({ force: true, timeout: TIMEOUTS.element });
-        this.log('Credit card input (#rb_scheme) clicked with force as last resort', 'info');
-        panelVisible = await waitForAdyenPanel();
-      } catch (error) {
-        this.log(`Credit card input click failed: ${(error as Error).message}`, 'error');
-      }
-    }
-
-    if (!panelVisible) {
-      // Last chance: if card input fields are already visible, proceed (some UIs pre-select or render differently for JP/NL)
-      const cardField = this.page.locator('.adyen-checkout__field--cardNumber, [data-cse="encryptedCardNumber"], input[autocomplete*="cc-number" i], iframe[title*="card number" i]').first();
-      if (await cardField.isVisible({ timeout: 3000 }).catch(() => false)) {
-        panelVisible = true;
-        this.logSuccess('Credit card fields visible directly (proceeding without explicit panel detection)');
-      }
-    }
-
-    if (!panelVisible) {
-      // If we couldn't click #lb_scheme at all, error. Otherwise we set panelVisible=true.
-      throw new Error('Credit Card panel did not become visible after all triggers');
-    }
-
-    // Final safety net for Adyen/guest: if the radio exists but is not checked, force it one last time.
-    try {
-      const radio = this.page.locator('#rb_scheme');
-      if ((await radio.count().catch(() => 0)) > 0) {
-        const isChecked = await radio.isChecked().catch(() => false);
-        if (!isChecked) {
-          await this.page.locator('#lb_scheme').click({ force: true }).catch(() => {});
-          await radio.check({ force: true }).catch(() => {});
-          await radio.evaluate((el: any) => { try { el.checked = true; el.dispatchEvent(new Event('change', {bubbles:true})); } catch {} }).catch(() => {});
-          this.log('Forced final CREDIT CARD selection (radio was not checked)', 'info');
-        }
-      }
-    } catch {}
-
-    this.logSuccess('Credit card payment option selected');
-
-    // Wait for Adyen card number field to become visible
-    const adyenCardField = this.page.locator('.adyen-checkout__field--cardNumber');
-    await adyenCardField.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation }).catch(() => {});
-
-    // Wait for Adyen payment form iframes to load
-    await this.waitForAdyenForm();
-
-    return true;
+    this.log('Credit card selection not confirmed after force attempts', 'warn');
+    return false;
   }
 
   /**
@@ -329,6 +161,70 @@ export class CheckoutPaymentPage extends BasePage {
     if (clicked) {
       this.logSuccess('Payment section clicked to expand');
       await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+    }
+  }
+
+  /**
+   * Force CREDIT CARD to be the selected payment method.
+   * Used for Adyen flows (NL/FR etc.) where pre-selection or other methods (iDEAL etc.)
+   * can be active after shipping/pickup, especially for registered users.
+   */
+  private async forceCreditCardSelection(): Promise<void> {
+    this.logStep('Forcing CREDIT CARD as active payment method');
+
+    // Use updated robust locator
+    const label = this.page.locator(SELECTORS.CHECKOUT.PAYMENT.CREDIT_CARD_LABEL).first();
+    const radio = this.page.locator(SELECTORS.CHECKOUT.PAYMENT.CREDIT_CARD_INPUT).first();
+
+    // Give the payment options a moment to stabilize (important for registered + pickup)
+    await this.page.waitForTimeout(500);
+
+    // Try label click (preferred) - try without force first for better event triggering
+    try {
+      await label.scrollIntoViewIfNeeded().catch(() => {});
+      await label.click({ timeout: 1500 }).catch(async () => {
+        await label.click({ force: true, timeout: 1500 }).catch(() => {});
+      });
+      this.log('Clicked CREDIT CARD label');
+    } catch {
+      this.log('Label click failed, trying direct radio', 'warn');
+    }
+
+    // Force the radio + events (multiple dispatches for Adyen)
+    try {
+      await radio.scrollIntoViewIfNeeded().catch(() => {});
+      await radio.check({ force: true });
+      await radio.evaluate((el: HTMLInputElement) => {
+        el.checked = true;
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('click', { bubbles: true }));
+        // Also try to trigger any parent click if needed
+        const parent = el.closest('label') || el.parentElement;
+        if (parent) parent.dispatchEvent(new Event('click', { bubbles: true }));
+      });
+      this.logSuccess('CREDIT CARD radio forced checked');
+    } catch (e) {
+      this.log(`Radio force failed: ${(e as Error).message}`, 'warn');
+    }
+
+    // Extra wait for Adyen to mount the card form
+    await this.page.waitForTimeout(600);
+  }
+
+  /**
+   * Wait until the main credit card payment option UI is ready to be interacted with.
+   * Used by both shipping transition and payment step for consistency (especially guest flows).
+   */
+  async waitForCreditCardOptionReady(timeout = TIMEOUTS.element): Promise<void> {
+    try {
+      await this.page.waitForSelector(
+        '#lb_scheme, label[for="rb_scheme"], .adyen-checkout__payment-methods, label:has-text("CREDIT CARD"), label:has-text("Credit Card"), [role="radiogroup"]',
+        { state: 'visible', timeout }
+      );
+      await this.page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => {});
+    } catch {
+      this.log('Credit card option selectors did not appear within timeout', 'warn');
     }
   }
 

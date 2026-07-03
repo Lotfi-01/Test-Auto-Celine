@@ -673,7 +673,14 @@ export class CheckoutShippingPage extends BasePage {
 
     // 1) Click the PICK-UP IN STORE tab — :visible filters out hidden duplicates that
     //    may exist in cart sidebar or other includes (FR/US/JP/AU all share this pattern).
-    const pickupTab = this.page.locator('button[aria-controls="panel_pick_up"][role="tab"]:visible').first();
+    // More robust locator for PICK-UP tab (NL sandbox can render slightly differently)
+    const pickupTab = this.page.locator(
+      'button[aria-controls*="pick_up"][role="tab"]:visible, ' +
+      'button[aria-controls*="pick_up"]:visible, ' +
+      'button:has-text("PICK-UP"):visible, ' +
+      'button:has-text("Click & Collect"):visible, ' +
+      '[role="tab"]:has-text("PICK"):visible'
+    ).first();
     try {
       await pickupTab.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
       await pickupTab.scrollIntoViewIfNeeded().catch(() => {});
@@ -688,7 +695,35 @@ export class CheckoutShippingPage extends BasePage {
       }
       this.logSuccess('PICK-UP IN STORE tab clicked');
     } catch (err) {
-      throw new Error(`PICK-UP tab click failed: ${(err as Error).message}`);
+      // Fallback for cases where tab is not visible (e.g. already selected, registered saved, or UI variation)
+      this.log('PICK-UP tab not visible, checking if pickup form is already open...', 'warn');
+      const pickupPanel = this.page.locator('section[data-osidepanel-name*="click"], [id*="pickup"], form:has(input[name*="firstNamePickup"])').first();
+      if (await pickupPanel.isVisible({ timeout: 3000 }).catch(() => false)) {
+        this.logSuccess('Pickup form/panel already visible, proceeding without tab click');
+      } else {
+        // Last resort: try to find and click any pickup related button or label to open the form
+        this.log('Trying last resort click for pickup option...', 'warn');
+        const anyPickup = this.page.locator('button:has-text("PICK"), button:has-text("Click & Collect"), label:has-text("PICK-UP"), [data-delivery*="pickup"]').first();
+        if (await anyPickup.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await anyPickup.click({ force: true }).catch(() => {});
+          await this.page.waitForTimeout(500);
+          this.logSuccess('Clicked alternative pickup element');
+        } else {
+          // Ultimate fallback: use JS to find and click any element with pickup text
+          this.log('Ultimate JS fallback for pickup...', 'warn');
+          await this.page.evaluate(() => {
+            const els = Array.from(document.querySelectorAll('button, label, a, div[role="tab"]'));
+            const match = els.find(el => /pick.?up|click.?&.?collect/i.test(el.textContent || ''));
+            if (match) (match as HTMLElement).click();
+          }).catch(() => {});
+          await this.page.waitForTimeout(1000);
+          // Check again
+          if (!(await pickupPanel.isVisible({ timeout: 2000 }).catch(() => false))) {
+            throw new Error(`PICK-UP tab click failed: ${(err as Error).message}`);
+          }
+          this.logSuccess('Pickup opened via JS fallback');
+        }
+      }
     }
 
     // Verify the tab actually became selected. If not, fall back to dispatching a click event in JS.

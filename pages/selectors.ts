@@ -71,9 +71,10 @@ export const SELECTORS = {
     // ===== PAYMENT STEP =====
     PAYMENT: {
       // Payment method selection
-      CREDIT_CARD_LABEL: 'label#lb_scheme, label[for="rb_scheme"], label.m-field__label--radio[for="rb_scheme"]',
-      CREDIT_CARD_INPUT: 'input[id="rb_scheme"], #rb_scheme',
-      CREDIT_CARD_TEXT: 'label:has-text("CARTE DE CRÉDIT"), label:has-text("Carte bancaire")',
+      // Updated for current NL/FR site variations - include text-based and role-based
+      CREDIT_CARD_LABEL: 'label#lb_scheme, label[for="rb_scheme"], label.m-field__label--radio[for="rb_scheme"], label:has-text("CREDIT CARD"), label:has-text("Credit Card"), label:has-text("Kaart"), [role="radio"]:has-text("credit"), label:has-text("CARTE")',
+      CREDIT_CARD_INPUT: 'input[id="rb_scheme"], #rb_scheme, input[type="radio"][name*="credit"], input[type="radio"][value*="card"]',
+      CREDIT_CARD_TEXT: 'label:has-text("CARTE DE CRÉDIT"), label:has-text("Carte bancaire"), label:has-text("CREDIT CARD"), label:has-text("Credit Card")',
       PAYMENT_HEADER: 'h2:has-text("PAIEMENT"), h2:has-text("Payment"), h2:has-text("BETALING"), button:has-text("PAIEMENT"), button:has-text("Payment"), [class*="payment"]:has-text("PAIEMENT"), [class*="payment"]:has-text("Payment")',
 
       // Card fields (non-iframe)

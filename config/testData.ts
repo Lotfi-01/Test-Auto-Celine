@@ -1,15 +1,24 @@
 /**
  * Test data configuration by region
  * Provides region-specific test data (FR, US, etc.)
+ *
+ * SECURITY NOTE (Critical):
+ * - All card numbers, passwords and external account credentials here are **SANDBOX only**.
+ * - Prefer setting the corresponding TEST_* env vars in your .env file.
+ * - The getEnvVar helper (with isSensitive=true) will emit a one-time warning when fallbacks are used.
+ * - Never use production credentials.
  */
+
+import { getEnvVar } from './testConfig';
 
 /**
  * PayPal sandbox credentials — shared across all regions.
  * Override via TEST_PAYPAL_EMAIL / TEST_PAYPAL_PASSWORD.
+ * IMPORTANT: These are PUBLIC sandbox values. Always prefer setting the env vars.
  */
 export const PAYPAL_CREDENTIALS = {
-  email: process.env.TEST_PAYPAL_EMAIL || 'celine-marchand-sandbox@gmail.com',
-  password: process.env.TEST_PAYPAL_PASSWORD || 'Celine19!',
+  email: getEnvVar('TEST_PAYPAL_EMAIL', 'celine-marchand-sandbox@gmail.com', true),
+  password: getEnvVar('TEST_PAYPAL_PASSWORD', 'Celine19!', true),
 };
 
 /**
@@ -17,13 +26,16 @@ export const PAYPAL_CREDENTIALS = {
  * Override via TEST_AFTERPAY_EMAIL_AU / TEST_AFTERPAY_PASSWORD_AU.
  */
 export const AFTERPAY_AU_CREDENTIALS = {
-  email: process.env.TEST_AFTERPAY_EMAIL_AU || 'sebastien.dejoue+AU@celine.fr',
-  password: process.env.TEST_AFTERPAY_PASSWORD_AU || 'Testing!!Celine!',
+  email: getEnvVar('TEST_AFTERPAY_EMAIL_AU', 'sebastien.dejoue+AU@celine.fr', true),
+  password: getEnvVar('TEST_AFTERPAY_PASSWORD_AU', 'Testing!!Celine!', true),
 };
 
 export interface RegionalTestData {
   email: string;
-  /** Password for registered customer login in checkout (email + password flow) */
+  /**
+   * Password for registered customer login in checkout (email + password flow).
+   * SANDBOX ONLY. Never commit real customer passwords. Prefer env vars.
+   */
   password?: string;
   address: {
     title: 'Mr' | 'Mrs' | 'Ms' | 'M' | 'Mme' | 'Mlle';
@@ -128,7 +140,8 @@ function getAuCard(): { number: string; expiry: string; cvv: string } {
  */
 export const TEST_DATA_FR: RegionalTestData = {
   email: process.env.TEST_EMAIL_FR || 'fr_lotfi_test@yopmail.com',
-  password: process.env.TEST_PASSWORD_FR || 'Test1234!',
+  // SANDBOX fallback - override with TEST_PASSWORD_FR in .env
+  password: getEnvVar('TEST_PASSWORD_FR', 'Test1234!', true),
   address: {
     title: 'M',
     firstName: 'Test',
@@ -140,7 +153,8 @@ export const TEST_DATA_FR: RegionalTestData = {
     country: 'FR',
   },
   payment: {
-    cardNumber: '4111111111111111',
+    // SANDBOX test card - always prefer TEST_CARD_NUMBER_* env
+    cardNumber: getEnvVar('TEST_CARD_NUMBER_FR', '4111111111111111', true),
     cardHolder: 'Test Lotfi',
     expiryDate: '03/30',
     cvv: '737',
@@ -272,7 +286,8 @@ export const TEST_DATA_TH: RegionalTestData = {
  */
 export const TEST_DATA_NL: RegionalTestData = {
   email: process.env.TEST_EMAIL_NL || 'nl_customer_lotfi@yopmail.com',
-  password: process.env.TEST_PASSWORD_NL || 'Test1234!',
+  // SANDBOX fallback
+  password: getEnvVar('TEST_PASSWORD_NL', 'Test1234!', true),
   address: {
     title: 'Mr',
     firstName: process.env.TEST_FIRSTNAME_NL || 'Lotfi',
@@ -284,7 +299,8 @@ export const TEST_DATA_NL: RegionalTestData = {
     country: 'NL',
   },
   payment: {
-    cardNumber: '4111111111111111',
+    // SANDBOX test card
+    cardNumber: getEnvVar('TEST_CARD_NUMBER_NL', '4111111111111111', true),
     cardHolder:
       process.env.TEST_CARDHOLDER_NL ||
       `${(process.env.TEST_FIRSTNAME_NL || 'LOTFI').toUpperCase()} ${(process.env.TEST_LASTNAME_NL || 'TEST').toUpperCase()}`,

@@ -58,7 +58,7 @@ export abstract class BasePage {
   /**
    * Log a message with the component prefix
    */
-  protected log(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
+  protected log(message: string, level: 'info' | 'warn' | 'error' | 'debug' = 'info'): void {
     const prefixed = `[${this.componentName}] ${message}`;
     switch (level) {
       case 'warn':
@@ -66,6 +66,13 @@ export abstract class BasePage {
         break;
       case 'error':
         logger.error(prefixed);
+        break;
+      case 'debug':
+        if (typeof logger.debug === 'function') {
+          logger.debug(prefixed);
+        } else {
+          logger.info(`[debug] ${prefixed}`);
+        }
         break;
       default:
         logger.info(prefixed);
@@ -202,12 +209,15 @@ export abstract class BasePage {
   }
 
   /**
-   * Check if an element is visible
+   * Check if an element is visible.
+   * Errors are logged at debug level to reduce noise while still providing traceability.
    */
   protected async isVisible(locator: Locator, timeout: number = 2000): Promise<boolean> {
     try {
       return await locator.isVisible({ timeout });
-    } catch {
+    } catch (err) {
+      // Do not swallow completely — log for debugging (helps root cause analysis on guest/payment flows)
+      this.log(`isVisible check failed (timeout=${timeout}ms): ${(err as Error)?.message || err}`, 'debug');
       return false;
     }
   }

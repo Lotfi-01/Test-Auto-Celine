@@ -102,7 +102,7 @@ Running optimized test for region: ${testInfo.project.name}`);
     // STEPS 1+2+3 for mono product
     // closeAllSidePanels is imported at top for speed (no dynamic import per step)
 
-    let buyNowUsed = false;
+    let _buyNowUsed = false;
 
     const productUrls: string[] = Array.isArray(testData.productUrl) ? testData.productUrl : [testData.productUrl];
     const currentUrl = productUrls[0];
@@ -134,7 +134,7 @@ Running optimized test for region: ${testInfo.project.name}`);
 
       if (buyNowVisible) {
         await productPage.buyNow();
-        buyNowUsed = true;
+        _buyNowUsed = true;
         console.log('   Buy Now successful - now at checkout');
       } else {
         await productPage.addToCart();
@@ -213,7 +213,7 @@ Running optimized test for region: ${testInfo.project.name}`);
           } else {
             console.log('   US zipcode filled (for Click & Collect store lookup) — skipping shipping OK to avoid forcing home delivery');
           }
-        } catch (e) {
+        } catch (_e) {
           console.log('   Zipcode field not found or already handled');
         }
       } else {
@@ -357,20 +357,13 @@ Running optimized test for region: ${testInfo.project.name}`);
 
     // Note: one consolidated close above is sufficient; removed duplicate for speed
 
-    // Robust wait for payment method selectors to stabilize (especially important for guest flows).
-    // Registered skip path + guest submit path can arrive at different times; give the radios/labels time.
-    try {
-      await page.waitForSelector(
-        '#lb_scheme, label[for="rb_scheme"], .adyen-checkout__payment-methods, input[type="radio"]',
-        { state: 'visible', timeout: 8000 }
-      );
-      console.log('   Payment method options (e.g. #lb_scheme) are visible');
-    } catch {
-      console.log('   Payment selectors not visible yet after continueToPayment — selection will wait');
-    }
+    // Use the dedicated helper for consistent, semantic wait for payment options.
+    // This replaces ad-hoc waits and works for both registered skip and guest flows.
+    await checkoutPage.payment.waitForCreditCardOptionReady(8000);
+    console.log('   Payment method options ready');
 
-    // Short additional settle so payment options (incl. #lb_scheme) are fully ready for interaction
-    await page.waitForTimeout(400);
+    // Extra settle for registered + pickup flows (payment methods can take a bit to be interactive)
+    await page.waitForTimeout(300);
 
     const paymentMethod = (process.env.TEST_PAYMENT_METHOD || 'card').toLowerCase();
     console.log(`   Payment method: ${paymentMethod}`);
@@ -390,21 +383,27 @@ Running optimized test for region: ${testInfo.project.name}`);
       const payment = testData.payment;
 
       // Select credit card option
+      // Retry once if first attempt fails to select (common timing issue on registered + pickup)
       let paymentMethodSelected = false;
       try {
         paymentMethodSelected = await checkoutPage.payment.selectCreditCardPayment();
-
-        if (paymentMethodSelected) {
-          // Fill payment details only after successful selection
-          await checkoutPage.payment.fillPaymentInfo({
-            cardNumber: payment.cardNumber,
-            cardholderName: payment.cardHolder,
-            expirationDate: payment.expiryDate,
-            cvv: payment.cvv,
-          });
-        } else {
-          console.log('   selectCreditCardPayment returned false — skipping fill (will likely fail later if no method active)');
+        if (!paymentMethodSelected) {
+          console.log('   First select attempt did not confirm selection, retrying...');
+          await page.waitForTimeout(500);
+          paymentMethodSelected = await checkoutPage.payment.selectCreditCardPayment();
         }
+
+        if (!paymentMethodSelected) {
+          throw new Error('Credit card payment method was not successfully selected');
+        }
+
+        // Fill payment details only after successful selection
+        await checkoutPage.payment.fillPaymentInfo({
+          cardNumber: payment.cardNumber,
+          cardholderName: payment.cardHolder,
+          expirationDate: payment.expiryDate,
+          cvv: payment.cvv,
+        });
       } catch (e) {
         if ((e as Error).message.includes('closed') || (e as Error).message.includes('Page is closed')) {
           console.log('   Payment selection/fill skipped due to page closed (common in long guest flows)');

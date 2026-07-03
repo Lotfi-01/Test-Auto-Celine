@@ -72,10 +72,25 @@ function validateRequiredEnvVars(): void {
 }
 
 /**
- * Get environment variable with fallback
+ * Get environment variable with fallback.
+ * For sensitive values (passwords, cards, emails), we log a one-time warning
+ * when falling back to a hardcoded sandbox value so developers know to configure .env.
  */
-function getEnvVar(name: string, fallback: string): string {
-  return process.env[name] || fallback;
+const warnedFallbacks = new Set<string>();
+
+export function getEnvVar(name: string, fallback: string, isSensitive = false): string {
+  const value = process.env[name];
+  if (value) {
+    return value;
+  }
+  if (isSensitive && !warnedFallbacks.has(name)) {
+    warnedFallbacks.add(name);
+    console.warn(
+      `⚠️  Using SANDBOX fallback for ${name}. ` +
+      `Create a proper .env file (see .env.example) with your own test account to avoid using shared sandbox credentials.`
+    );
+  }
+  return fallback;
 }
 
 /**
@@ -117,10 +132,11 @@ export const TEST_CONFIG: TestConfig = {
       country: getEnvVar('TEST_ADDRESS_COUNTRY', 'FR'),
     },
     payment: {
-      cardNumber: getEnvVar('TEST_CARD_NUMBER', '4111111111111111'),
-      cardHolder: getEnvVar('TEST_CARD_HOLDER', 'Test User'),
-      expiryDate: getEnvVar('TEST_CARD_EXPIRY', '03/30'),
-      cvv: getEnvVar('TEST_CARD_CVV', '737'),
+      // Sensitive values: warn if using built-in sandbox test cards
+      cardNumber: getEnvVar('TEST_CARD_NUMBER', '4111111111111111', true),
+      cardHolder: getEnvVar('TEST_CARD_HOLDER', 'Test User', true),
+      expiryDate: getEnvVar('TEST_CARD_EXPIRY', '03/30', true),
+      cvv: getEnvVar('TEST_CARD_CVV', '737', true),
     },
   },
 
