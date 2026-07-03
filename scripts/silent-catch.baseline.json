@@ -1,0 +1,15 @@
+{
+  "_description": "Frozen count of silent `.catch(() => {})` occurrences. See scripts/check-silent-catch-baseline.js. Only regenerate when intentionally reducing the debt.",
+  "generatedAt": "2026-07-03T17:32:45.434Z",
+  "total": 82,
+  "counts": {
+    "pages/BasePage.ts": 5,
+    "pages/CelineProductPage.ts": 7,
+    "pages/checkout/CheckoutLoginPage.ts": 4,
+    "pages/checkout/CheckoutPaymentPage.ts": 23,
+    "pages/checkout/CheckoutShippingPage.ts": 28,
+    "utils/formHelper.ts": 2,
+    "utils/selectorStrategy.ts": 6,
+    "tests/celine-purchase.spec.ts": 7
+  }
+}

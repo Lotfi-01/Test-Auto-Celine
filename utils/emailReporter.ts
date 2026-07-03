@@ -4,6 +4,23 @@ import { testResultTracker } from './testResultTracker';
 import { maskEmailForLog } from './logger';
 
 /**
+ * Escape any value before injecting it into the HTML email body.
+ *
+ * Sprint 1 policy (see CODE_REVIEW.md §F-S9 / DEBT.md): every dynamic value
+ * built from an order record, test result, environment variable or user input
+ * MUST pass through this helper before landing in the template. Do NOT wrap
+ * constant style strings or internal template scaffolding.
+ */
+export function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Email Reporter - Sends test reports via email
  * Automatically sends order summaries and statistics after test execution
  */
@@ -113,7 +130,12 @@ export class EmailReporter {
       };
       const icons = { success: '●', failed: '●', partial: '●' };
       const labels = { success: 'Succès', failed: 'Échec', partial: 'Partiel' };
-      return `<span style="display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 500; letter-spacing: 0.5px; ${styles[status as keyof typeof styles] || styles.partial}">${icons[status as keyof typeof icons] || '●'} ${labels[status as keyof typeof labels] || status}</span>`;
+      const style = styles[status as keyof typeof styles] || styles.partial;
+      const icon = icons[status as keyof typeof icons] || '●';
+      const label = labels[status as keyof typeof labels] || status;
+      // `style`, `icon` are internal constants; `label` is a status literal or
+      // an unknown status string — escape defensively.
+      return `<span style="display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 500; letter-spacing: 0.5px; ${style}">${icon} ${escapeHtml(label)}</span>`;
     };
 
     const orderRows = orders
@@ -121,15 +143,15 @@ export class EmailReporter {
         (order) => `
         <tr>
           <td style="padding: 16px 20px; border-bottom: 1px solid #F0F0F0;">
-            <div style="font-family: 'Courier New', monospace; font-size: 14px; font-weight: 600; color: #1A1A1A; letter-spacing: 0.5px;">${order.orderNumber}</div>
-            <div style="font-size: 11px; color: #888; margin-top: 4px;">${order.testName}</div>
+            <div style="font-family: 'Courier New', monospace; font-size: 14px; font-weight: 600; color: #1A1A1A; letter-spacing: 0.5px;">${escapeHtml(order.orderNumber)}</div>
+            <div style="font-size: 11px; color: #888; margin-top: 4px;">${escapeHtml(order.testName)}</div>
           </td>
           <td style="padding: 16px 20px; border-bottom: 1px solid #F0F0F0; text-align: center;">
             ${getStatusBadge(order.status)}
           </td>
           <td style="padding: 16px 20px; border-bottom: 1px solid #F0F0F0; text-align: right;">
-            <div style="font-size: 13px; color: #1A1A1A;">${formatDate(order.timestamp)}</div>
-            <div style="font-size: 11px; color: #888; margin-top: 2px;">${formatTime(order.timestamp)}</div>
+            <div style="font-size: 13px; color: #1A1A1A;">${escapeHtml(formatDate(order.timestamp))}</div>
+            <div style="font-size: 11px; color: #888; margin-top: 2px;">${escapeHtml(formatTime(order.timestamp))}</div>
           </td>
         </tr>
       `
@@ -144,11 +166,11 @@ export class EmailReporter {
           (test) => `
         <tr>
           <td style="padding: 12px 20px; border-bottom: 1px solid #F0F0F0;">
-            <div style="font-size: 14px; font-weight: 600; color: #C62828;">🌍 ${test.region}</div>
-            <div style="font-size: 11px; color: #888; margin-top: 4px;">${test.testName}</div>
+            <div style="font-size: 14px; font-weight: 600; color: #C62828;">🌍 ${escapeHtml(test.region)}</div>
+            <div style="font-size: 11px; color: #888; margin-top: 4px;">${escapeHtml(test.testName)}</div>
           </td>
           <td style="padding: 12px 20px; border-bottom: 1px solid #F0F0F0; text-align: right;">
-            <div style="font-size: 11px; color: #666;">${new Date(test.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
+            <div style="font-size: 11px; color: #666;">${escapeHtml(new Date(test.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }))}</div>
           </td>
         </tr>
       `
@@ -254,7 +276,7 @@ export class EmailReporter {
                             <div style="font-size: 11px; color: #888; letter-spacing: 2px; text-transform: uppercase; margin-top: 8px;">Quality Assurance</div>
                           </td>
                           <td align="right" style="vertical-align: top;">
-                            <div style="font-size: 11px; color: #888; text-transform: capitalize;">${currentDate}</div>
+                            <div style="font-size: 11px; color: #888; text-transform: capitalize;">${escapeHtml(currentDate)}</div>
                           </td>
                         </tr>
                       </table>
@@ -338,9 +360,9 @@ export class EmailReporter {
                           <td>
                             <div style="font-size: 11px; color: #888; line-height: 1.6;">
                               Rapport généré automatiquement<br>
-                              Environnement : <span style="color: #666;">${process.env.NODE_ENV || 'development'}</span><br>
-                              Navigateur : <span style="color: #666;">${browserInfo}</span><br>
-                              Durée totale : <span style="color: #666;">${testDuration}</span>
+                              Environnement : <span style="color: #666;">${escapeHtml(process.env.NODE_ENV || 'development')}</span><br>
+                              Navigateur : <span style="color: #666;">${escapeHtml(browserInfo)}</span><br>
+                              Durée totale : <span style="color: #666;">${escapeHtml(testDuration)}</span>
                             </div>
                           </td>
                           <td align="right" style="vertical-align: bottom;">
@@ -403,8 +425,11 @@ export class EmailReporter {
       text += `   Status: ${order.status}\n`;
       text += `   Date: ${new Date(order.timestamp).toLocaleString('fr-FR')}\n`;
       text += `   Test: ${order.testName}\n`;
-      if (order.metadata?.email) {
-        text += `   Email: ${order.metadata.email}\n`;
+      // Prefer the masked field (default policy). Fall back to hash for
+      // correlation. Full email is only present when INCLUDE_PII_IN_REPORT=true.
+      const displayEmail = order.metadata?.emailMasked || order.metadata?.email || order.metadata?.emailHash;
+      if (displayEmail) {
+        text += `   Email: ${displayEmail}\n`;
       }
       if (order.metadata?.total) {
         text += `   Total: ${order.metadata.total}\n`;
@@ -510,7 +535,7 @@ export class EmailReporter {
           .map(
             (num) => `
             <tr>
-              <td style="padding: 12px 16px; border-bottom: 1px solid #F0F0F0; font-family: 'Courier New', monospace; font-size: 13px; letter-spacing: 0.5px; color: #1A1A1A;">${num}</td>
+              <td style="padding: 12px 16px; border-bottom: 1px solid #F0F0F0; font-family: 'Courier New', monospace; font-size: 13px; letter-spacing: 0.5px; color: #1A1A1A;">${escapeHtml(num)}</td>
             </tr>
           `
           )
@@ -556,7 +581,7 @@ export class EmailReporter {
                     <tr>
                       <td style="padding: 30px 40px 25px 40px;">
                         <h1 style="margin: 0 0 15px 0; font-size: 16px; font-weight: 500; color: #1A1A1A; letter-spacing: 0.3px;">Notification</h1>
-                        <p style="margin: 0; font-size: 14px; color: #444; line-height: 1.7;">${message}</p>
+                        <p style="margin: 0; font-size: 14px; color: #444; line-height: 1.7;">${escapeHtml(message)}</p>
                       </td>
                     </tr>
 
@@ -565,7 +590,7 @@ export class EmailReporter {
                     <!-- Footer -->
                     <tr>
                       <td style="padding: 25px 40px; background-color: #FAFAFA; border-top: 1px solid #F0F0F0;">
-                        <div style="font-size: 11px; color: #AAA;">${currentDate}</div>
+                        <div style="font-size: 11px; color: #AAA;">${escapeHtml(currentDate)}</div>
                       </td>
                     </tr>
 

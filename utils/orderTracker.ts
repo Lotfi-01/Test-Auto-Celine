@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { withFileLock } from './fileLock';
+import { hashEmailForCorrelation, includePiiInReport, maskEmailForLog } from './logger';
 
 /**
  * Order tracking utility
@@ -19,10 +20,22 @@ export interface OrderRecord {
   testName: string;
   status: 'success' | 'failed' | 'partial';
   metadata?: {
+    /**
+     * Full email — ONLY populated when INCLUDE_PII_IN_REPORT=true.
+     * Default runs store `emailMasked` + `emailHash` instead.
+     */
     email?: string;
+    /** Human-readable masked form (e.g. "lo***@***.com"). Safe to display. */
+    emailMasked?: string;
+    /** Deterministic short SHA-256 slice for cross-system correlation. */
+    emailHash?: string;
     total?: string;
     items?: number;
-    [key: string]: any;
+    /** Wall-clock ms for this test (used by emailReporter to compute duration). */
+    duration?: number;
+    productUrl?: string;
+    browser?: string;
+    [key: string]: unknown;
   };
 }
 
@@ -133,13 +146,17 @@ export class OrderTracker {
     return withFileLock(this.lockFile, async () => {
       const orders = await this.readOrders();
 
+      // PII policy: sanitize the incoming metadata.email before persisting.
+      // Default = mask + hash only. Raw email requires INCLUDE_PII_IN_REPORT=true.
+      const sanitizedMetadata = this.sanitizeMetadata(options.metadata);
+
       const newOrder: OrderRecord = {
         orderNumber,
         displayedOrderNumber: options.displayedOrderNumber,
         timestamp: new Date().toISOString(),
         testName: options.testName,
         status: options.status || 'success',
-        metadata: options.metadata,
+        metadata: sanitizedMetadata,
       };
 
       orders.push(newOrder);
@@ -147,6 +164,27 @@ export class OrderTracker {
 
       console.log(`💾 Order saved: ${orderNumber} (${this.ordersFile})`);
     });
+  }
+
+  /**
+   * Apply the repo PII policy to a metadata object before persistence.
+   * - Always strips the raw `email` unless INCLUDE_PII_IN_REPORT=true.
+   * - Always fills `emailMasked` + `emailHash` when a raw email is supplied.
+   */
+  private sanitizeMetadata(metadata: OrderRecord['metadata']): OrderRecord['metadata'] {
+    if (!metadata) return metadata;
+    const { email, emailMasked, emailHash, ...rest } = metadata;
+    const rawEmail = typeof email === 'string' ? email : undefined;
+
+    const derivedMasked = emailMasked ?? (rawEmail ? maskEmailForLog(rawEmail) : undefined);
+    const derivedHash = emailHash ?? (rawEmail ? hashEmailForCorrelation(rawEmail) : undefined);
+
+    return {
+      ...rest,
+      ...(derivedMasked ? { emailMasked: derivedMasked } : {}),
+      ...(derivedHash ? { emailHash: derivedHash } : {}),
+      ...(includePiiInReport() && rawEmail ? { email: rawEmail } : {}),
+    };
   }
 
   /**

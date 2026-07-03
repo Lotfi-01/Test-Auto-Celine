@@ -1,54 +1,86 @@
 /**
  * Test data configuration by region
- * Provides region-specific test data (FR, US, etc.)
+ * Provides region-specific test data (FR, US, JP, AU, TH, NL)
  *
- * SECURITY NOTE (Critical):
- * - All card numbers, passwords and external account credentials here are **SANDBOX only**.
- * - Prefer setting the corresponding TEST_* env vars in your .env file.
- * - The getEnvVar helper (with isSensitive=true) will emit a one-time warning when fallbacks are used.
- * - Never use production credentials.
+ * SECURITY POLICY (Sprint 1 — do not weaken):
+ *  - This file MUST NOT contain any real credential, password, personal email,
+ *    real PAN, CVV or shared sandbox account. All sensitive values come from
+ *    environment variables via `.env` (see `.env.example`).
+ *  - When a required variable is missing at test time, `requireEnv(name)`
+ *    throws with a clear message so the failure surfaces immediately in the
+ *    test that needs it — NOT at Playwright config load time (that would
+ *    break unit tests / lint / typecheck).
+ *  - Card numbers accepted here are ONLY the sandbox card numbers documented
+ *    by Adyen and Cybersource. Never use a real card.
  */
 
-import { getEnvVar } from './testConfig';
+/**
+ * Read an env var; throw with a clear message if it's missing or empty.
+ * Use this at *test runtime* (inside a step / fixture), not at module load.
+ */
+export function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value || value.trim() === '') {
+    throw new Error(
+      `Missing required environment variable "${name}". ` +
+        `Set it in your .env file (see .env.example) or in your CI secret store.`
+    );
+  }
+  return value;
+}
 
 /**
- * PayPal sandbox credentials — shared across all regions.
- * Override via TEST_PAYPAL_EMAIL / TEST_PAYPAL_PASSWORD.
- * IMPORTANT: These are PUBLIC sandbox values. Always prefer setting the env vars.
+ * Read an env var with a fallback. NEVER pass a real credential as fallback —
+ * only use for non-sensitive defaults (delivery mode, product URL, etc.).
+ */
+function envOr(name: string, fallback: string): string {
+  const value = process.env[name];
+  return value && value.trim() !== '' ? value : fallback;
+}
+
+/**
+ * Lazy accessors for shared sandbox credentials. Return null when the env
+ * var is not set so the caller can decide (skip the test, throw a clear
+ * error, etc.). Never fall back to a hardcoded value.
  */
 export const PAYPAL_CREDENTIALS = {
-  email: getEnvVar('TEST_PAYPAL_EMAIL', 'celine-marchand-sandbox@gmail.com', true),
-  password: getEnvVar('TEST_PAYPAL_PASSWORD', 'Celine19!', true),
+  get email(): string {
+    return requireEnv('PAYPAL_EMAIL');
+  },
+  get password(): string {
+    return requireEnv('PAYPAL_PASSWORD');
+  },
 };
 
-/**
- * Afterpay sandbox credentials — AU only.
- * Override via TEST_AFTERPAY_EMAIL_AU / TEST_AFTERPAY_PASSWORD_AU.
- */
 export const AFTERPAY_AU_CREDENTIALS = {
-  email: getEnvVar('TEST_AFTERPAY_EMAIL_AU', 'sebastien.dejoue+AU@celine.fr', true),
-  password: getEnvVar('TEST_AFTERPAY_PASSWORD_AU', 'Testing!!Celine!', true),
+  get email(): string {
+    return requireEnv('AFTERPAY_AU_EMAIL');
+  },
+  get password(): string {
+    return requireEnv('AFTERPAY_AU_PASSWORD');
+  },
 };
 
 export interface RegionalTestData {
   email: string;
   /**
    * Password for registered customer login in checkout (email + password flow).
-   * SANDBOX ONLY. Never commit real customer passwords. Prefer env vars.
+   * Sourced from TEST_PASSWORD_<REGION>. When absent, tests that need a
+   * registered login will fail with a clear "missing env var" error.
    */
   password?: string;
   address: {
     title: 'Mr' | 'Mrs' | 'Ms' | 'M' | 'Mme' | 'Mlle';
     firstName: string;
     lastName: string;
-    firstNameKatakana?: string; // Optionnel - requis uniquement pour le Japon
-    lastNameKatakana?: string; // Optionnel - requis uniquement pour le Japon
+    firstNameKatakana?: string;
+    lastNameKatakana?: string;
     street: string;
     city: string;
-    state?: string; // Required for AU, US
+    state?: string;
     postalCode: string;
     phone: string;
-    phonePrefix?: string; // Required for AU (e.g. "+61")
+    phonePrefix?: string;
     country: string;
   };
   payment: {
@@ -63,8 +95,9 @@ export interface RegionalTestData {
 }
 
 /**
- * Default product URLs per region
- * Priority is always: TEST_PRODUCT_URL_<REGION> env var > this default.
+ * Default product URLs per region.
+ * These are PUBLIC PDP paths on the Celine site, not credentials.
+ * Priority is: TEST_PRODUCT_URL_<REGION> env var > this default.
  */
 const DEFAULT_PRODUCTS: Record<string, string | string[]> = {
   FR: '/fr-fr/celine-boutique-femme/mini-sacs/trio-flap/trio-flap-agneau-lisse-10P862O86.28PO.html',
@@ -75,17 +108,13 @@ const DEFAULT_PRODUCTS: Record<string, string | string[]> = {
   NL: '/en-nl/women/handbags/triomphe-canvas/teen-triomphe-bag-in-triomphe-canvas-and-calfskin-188882BZ4.04LU.html',
 };
 
-/**
- * Get product URL for a specific region
- * Priority: region-specific env var > region default
- * Note: Does NOT use TEST_PRODUCT_URL to avoid cross-region conflicts
- */
-function getProductUrl(region: "FR" | "JP" | "AU" | "TH" | "NL" | "US"): string | string[] {
+type Region = 'FR' | 'US' | 'JP' | 'AU' | 'TH' | 'NL';
+
+function getProductUrl(region: Region): string | string[] {
   const envVarName = `TEST_PRODUCT_URL_${region}`;
   const raw = process.env[envVarName];
 
   if (raw) {
-    // Comma-separated list (no comma in Celine PDP URLs) → multiple products in one order
     if (raw.includes(',')) {
       return raw
         .split(',')
@@ -97,253 +126,161 @@ function getProductUrl(region: "FR" | "JP" | "AU" | "TH" | "NL" | "US"): string 
 
   const defaultUrl = DEFAULT_PRODUCTS[region];
   if (!defaultUrl) {
-    throw new Error(
-      `No default product URL for region ${region}. ` +
-        `Please set the environment variable ${envVarName} ` +
-        `(example: TEST_PRODUCT_URL_US=/en-us/.../your-product.html)`
-    );
+    throw new Error(`No default product URL for region ${region}. Please set ${envVarName} in your .env.`);
   }
-
   return defaultUrl;
 }
 
-/**
- * Read delivery mode for a region: TEST_DELIVERY_MODE_<REGION>=pickup → Click & Collect.
- * Anything else (or unset) → 'home' (standard delivery).
- */
-function getDeliveryMode(region: 'FR' | 'US' | 'JP' | 'AU' | 'TH' | 'NL'): 'home' | 'pickup' {
+function getDeliveryMode(region: Region): 'home' | 'pickup' {
   const raw = (process.env[`TEST_DELIVERY_MODE_${region}`] || '').toLowerCase().trim();
   return raw === 'pickup' || raw === 'click-collect' || raw === 'cc' ? 'pickup' : 'home';
 }
 
 /**
- * AU card catalog. Default scheme is classic Visa. Switch to EFTPos via TEST_CARD_SCHEME_AU=eftpos.
- * TEST_CARD_NUMBER_AU still takes precedence as a raw override if set.
+ * Read the test card configuration for a region from env vars.
+ * All fields are required — if missing, throws a clear error at test runtime.
+ * The CI/dev must provide the Adyen/Cybersource-documented sandbox card values.
  */
-const AU_CARDS = {
-  visa: { number: '4111111111111111', expiry: '03/30', cvv: '737' },
-  eftpos: { number: '4089670000000014', expiry: '03/30', cvv: '737' },
-} as const;
-
-function getAuCard(): { number: string; expiry: string; cvv: string } {
-  const scheme = (process.env.TEST_CARD_SCHEME_AU || 'visa').toLowerCase().trim();
-  const card = AU_CARDS[scheme as keyof typeof AU_CARDS] || AU_CARDS.visa;
+function getRegionCard(region: Region): {
+  cardNumber: string;
+  expiryDate: string;
+  cvv: string;
+  cardHolder: string;
+} {
   return {
-    number: process.env.TEST_CARD_NUMBER_AU || card.number,
-    expiry: process.env.TEST_CARD_EXPIRY_AU || card.expiry,
-    cvv: process.env.TEST_CARD_CVV_AU || card.cvv,
+    cardNumber: requireEnv(`TEST_CARD_NUMBER_${region}`),
+    expiryDate: requireEnv(`TEST_CARD_EXPIRY_${region}`),
+    cvv: requireEnv(`TEST_CARD_CVV_${region}`),
+    cardHolder: requireEnv(`TEST_CARDHOLDER_${region}`),
   };
 }
 
 /**
- * French region test data
+ * AU allows a scheme switch (Visa default, EFTPos for 3DS testing).
+ * When TEST_CARD_SCHEME_AU=eftpos, callers still supply TEST_CARD_NUMBER_AU
+ * etc.; the scheme flag is here for POM branching only.
  */
-export const TEST_DATA_FR: RegionalTestData = {
-  email: process.env.TEST_EMAIL_FR || 'fr_lotfi_test@yopmail.com',
-  // SANDBOX fallback - override with TEST_PASSWORD_FR in .env
-  password: getEnvVar('TEST_PASSWORD_FR', 'Test1234!', true),
-  address: {
-    title: 'M',
-    firstName: 'Test',
-    lastName: 'Lotfi',
-    street: '123 Avenue des Champs-Élysées',
-    city: 'Paris',
-    postalCode: '75008',
-    phone: '0612345678',
-    country: 'FR',
-  },
-  payment: {
-    // SANDBOX test card - always prefer TEST_CARD_NUMBER_* env
-    cardNumber: getEnvVar('TEST_CARD_NUMBER_FR', '4111111111111111', true),
-    cardHolder: 'Test Lotfi',
-    expiryDate: '03/30',
-    cvv: '737',
-  },
-  productUrl: getProductUrl('FR'),
-  deliveryMode: getDeliveryMode('FR'),
-};
+export function getAuCardScheme(): 'visa' | 'eftpos' {
+  const scheme = (process.env.TEST_CARD_SCHEME_AU || 'visa').toLowerCase().trim();
+  return scheme === 'eftpos' ? 'eftpos' : 'visa';
+}
 
 /**
- * US region test data
+ * Region test data — all sensitive values loaded lazily via getters so that
+ * `import { TEST_DATA_FR } from '...'` at module load does NOT require the env
+ * to be complete (lint / typecheck / unit tests must pass without secrets).
+ * The env vars are only read when a getter is accessed at runtime.
  */
-export const TEST_DATA_US: RegionalTestData = {
-  email: process.env.TEST_EMAIL_US || 'us_lotfi_test@yopmail.com',
-  password: process.env.TEST_PASSWORD_US || 'Test1234!',
-  address: {
-    title: 'Mr',
-    firstName: 'Test',
-    lastName: 'Lotfi',
-    street: '123 Fifth Avenue',
-    city: 'New York',
-    state: 'NY',
-    postalCode: '10001',
-    phone: '6464233453',
-    country: 'US',
-  },
-  payment: {
-    cardNumber: '4111111111111111',
-    cardHolder: 'Test Lotfi',
-    expiryDate: '03/30',
-    cvv: '737',
-  },
-  productUrl: getProductUrl('US'),
-  deliveryMode: getDeliveryMode('US'),
-};
+function makeRegionalTestData(region: Region, address: RegionalTestData['address']): RegionalTestData {
+  return {
+    get email(): string {
+      return requireEnv(`TEST_EMAIL_${region}`);
+    },
+    get password(): string {
+      return requireEnv(`TEST_PASSWORD_${region}`);
+    },
+    address,
+    get payment() {
+      return getRegionCard(region);
+    },
+    get productUrl() {
+      return getProductUrl(region);
+    },
+    get deliveryMode() {
+      return getDeliveryMode(region);
+    },
+  } as RegionalTestData;
+}
 
 /**
- * Japan region test data
+ * Regional addresses — non-sensitive test fixtures (public place names,
+ * dummy names). Real personal identities MUST NOT be added here.
  */
-export const TEST_DATA_JP: RegionalTestData = {
-  email: process.env.TEST_EMAIL_JP || 'japan_tva_test1@yopmail.com',
-  password: process.env.TEST_PASSWORD_JP || 'Test1234!',
-  address: {
-    title: 'Mr',
-    firstName: 'Test',
-    lastName: 'Tanaka',
-    firstNameKatakana: 'テスト', // "Test" en katakana
-    lastNameKatakana: 'タナカ', // "Tanaka" en katakana
-    street: '1-2-3 Shibuya',
-    city: 'Tokyo',
-    postalCode: '150-0002',
-    phone: '09012345678',
-    country: 'JP',
-  },
-  payment: {
-    cardNumber: '3569990010095841',
-    cardHolder: 'Test Tanaka',
-    expiryDate: '03/30',
-    cvv: '737',
-  },
-  productUrl: getProductUrl('JP'),
-  deliveryMode: getDeliveryMode('JP'),
-};
 
-/**
- * Australia region test data
- */
-export const TEST_DATA_AU: RegionalTestData = {
-  email: process.env.TEST_EMAIL_AU || 'au_lotfi_test@yopmail.com',
-  password: process.env.TEST_PASSWORD_AU || 'Test1234!',
-  address: {
-    title: (process.env.TEST_TITLE_AU as 'Ms' | 'Mrs' | 'Mr') || 'Ms',
-    firstName: process.env.TEST_FIRSTNAME_AU || 'Lotfi',
-    lastName: process.env.TEST_LASTNAME_AU || 'Test',
-    street: process.env.TEST_STREET_AU || '1 Macquarie Street',
-    city: process.env.TEST_CITY_AU || 'Barangaroo',
-    state: process.env.TEST_STATE_AU || 'NSW',
-    postalCode: process.env.TEST_POSTAL_AU || '2000',
-    phone: process.env.TEST_PHONE_AU || '412345678',
-    phonePrefix: '+61',
-    country: 'AU',
-  },
-  payment: (() => {
-    const card = getAuCard();
-    return {
-      cardNumber: card.number,
-      cardHolder:
-        process.env.TEST_CARDHOLDER_AU ||
-        `${(process.env.TEST_FIRSTNAME_AU || 'LOTFI').toUpperCase()} ${(process.env.TEST_LASTNAME_AU || 'TEST').toUpperCase()}`,
-      expiryDate: card.expiry,
-      cvv: card.cvv,
-    };
-  })(),
-  productUrl: getProductUrl('AU'),
-  deliveryMode: getDeliveryMode('AU'),
-};
+export const TEST_DATA_FR: RegionalTestData = makeRegionalTestData('FR', {
+  title: 'M',
+  firstName: envOr('TEST_FIRSTNAME_FR', 'Test'),
+  lastName: envOr('TEST_LASTNAME_FR', 'User'),
+  street: envOr('TEST_STREET_FR', '123 Avenue des Champs-Élysées'),
+  city: envOr('TEST_CITY_FR', 'Paris'),
+  postalCode: envOr('TEST_POSTAL_FR', '75008'),
+  phone: envOr('TEST_PHONE_FR', '0612345678'),
+  country: 'FR',
+});
 
-/**
- * Thailand region test data — Cybersource payment provider, Bangkok address
- */
-export const TEST_DATA_TH: RegionalTestData = {
-  email: process.env.TEST_EMAIL_TH || 'th_lotfi_test@yopmail.com',
-  password: process.env.TEST_PASSWORD_TH || 'Test1234!',
-  address: {
-    title: (process.env.TEST_TITLE_TH as 'Ms' | 'Mrs' | 'Mr') || 'Ms',
-    firstName: process.env.TEST_FIRSTNAME_TH || 'Lotfi',
-    lastName: process.env.TEST_LASTNAME_TH || 'Test',
-    street: '999/9 Rama I Road',
-    city: 'Pathum Wan', // District (TH lowest admin level — fills "District" text input)
-    state: 'BANGKOK', // Province (TH higher admin level — matches PROVINCE select option)
-    postalCode: '10330',
-    phone: '821234567',
-    phonePrefix: '+66',
-    country: 'TH',
-  },
-  payment: {
-    cardNumber: '4111111111111111',
-    cardHolder:
-      process.env.TEST_CARDHOLDER_TH ||
-      `${(process.env.TEST_FIRSTNAME_TH || 'LOTFI').toUpperCase()} ${(process.env.TEST_LASTNAME_TH || 'TEST').toUpperCase()}`,
-    expiryDate: '03/30',
-    cvv: '737',
-  },
-  productUrl: getProductUrl('TH'),
-  deliveryMode: getDeliveryMode('TH'),
-};
+export const TEST_DATA_US: RegionalTestData = makeRegionalTestData('US', {
+  title: 'Mr',
+  firstName: envOr('TEST_FIRSTNAME_US', 'Test'),
+  lastName: envOr('TEST_LASTNAME_US', 'User'),
+  street: envOr('TEST_STREET_US', '123 Fifth Avenue'),
+  city: envOr('TEST_CITY_US', 'New York'),
+  state: envOr('TEST_STATE_US', 'NY'),
+  postalCode: envOr('TEST_POSTAL_US', '10001'),
+  phone: envOr('TEST_PHONE_US', '6464233453'),
+  country: 'US',
+});
 
-/**
- * Netherlands region test data
- */
-export const TEST_DATA_NL: RegionalTestData = {
-  email: process.env.TEST_EMAIL_NL || 'nl_customer_lotfi@yopmail.com',
-  // SANDBOX fallback
-  password: getEnvVar('TEST_PASSWORD_NL', 'Test1234!', true),
-  address: {
-    title: 'Mr',
-    firstName: process.env.TEST_FIRSTNAME_NL || 'Lotfi',
-    lastName: process.env.TEST_LASTNAME_NL || 'Test',
-    street: process.env.TEST_STREET_NL || '123 Damrak',
-    city: process.env.TEST_CITY_NL || 'Amsterdam',
-    postalCode: process.env.TEST_POSTAL_NL || '1012',
-    phone: process.env.TEST_PHONE_NL || '0612345678',
-    country: 'NL',
-  },
-  payment: {
-    // SANDBOX test card
-    cardNumber: getEnvVar('TEST_CARD_NUMBER_NL', '4111111111111111', true),
-    cardHolder:
-      process.env.TEST_CARDHOLDER_NL ||
-      `${(process.env.TEST_FIRSTNAME_NL || 'LOTFI').toUpperCase()} ${(process.env.TEST_LASTNAME_NL || 'TEST').toUpperCase()}`,
-    expiryDate: '03/30',
-    cvv: '737',
-  },
-  productUrl: getProductUrl('NL' as any),
-  deliveryMode: getDeliveryMode('NL'),
-};
+export const TEST_DATA_JP: RegionalTestData = makeRegionalTestData('JP', {
+  title: 'Mr',
+  firstName: envOr('TEST_FIRSTNAME_JP', 'Test'),
+  lastName: envOr('TEST_LASTNAME_JP', 'Tanaka'),
+  firstNameKatakana: envOr('TEST_FIRSTNAME_KANA_JP', 'テスト'),
+  lastNameKatakana: envOr('TEST_LASTNAME_KANA_JP', 'タナカ'),
+  street: envOr('TEST_STREET_JP', '1-2-3 Shibuya'),
+  city: envOr('TEST_CITY_JP', 'Tokyo'),
+  postalCode: envOr('TEST_POSTAL_JP', '150-0002'),
+  phone: envOr('TEST_PHONE_JP', '09012345678'),
+  country: 'JP',
+});
 
-/**
- * Get test data for a specific region
- * @param region - Region code (fr, us, jp, au, th, etc.)
- * @returns Regional test data
- */
+export const TEST_DATA_AU: RegionalTestData = makeRegionalTestData('AU', {
+  title: (process.env.TEST_TITLE_AU as 'Ms' | 'Mrs' | 'Mr') || 'Ms',
+  firstName: envOr('TEST_FIRSTNAME_AU', 'Test'),
+  lastName: envOr('TEST_LASTNAME_AU', 'User'),
+  street: envOr('TEST_STREET_AU', '1 Macquarie Street'),
+  city: envOr('TEST_CITY_AU', 'Barangaroo'),
+  state: envOr('TEST_STATE_AU', 'NSW'),
+  postalCode: envOr('TEST_POSTAL_AU', '2000'),
+  phone: envOr('TEST_PHONE_AU', '412345678'),
+  phonePrefix: '+61',
+  country: 'AU',
+});
+
+export const TEST_DATA_TH: RegionalTestData = makeRegionalTestData('TH', {
+  title: (process.env.TEST_TITLE_TH as 'Ms' | 'Mrs' | 'Mr') || 'Ms',
+  firstName: envOr('TEST_FIRSTNAME_TH', 'Test'),
+  lastName: envOr('TEST_LASTNAME_TH', 'User'),
+  street: envOr('TEST_STREET_TH', '999/9 Rama I Road'),
+  city: envOr('TEST_CITY_TH', 'Pathum Wan'),
+  state: envOr('TEST_STATE_TH', 'BANGKOK'),
+  postalCode: envOr('TEST_POSTAL_TH', '10330'),
+  phone: envOr('TEST_PHONE_TH', '821234567'),
+  phonePrefix: '+66',
+  country: 'TH',
+});
+
+export const TEST_DATA_NL: RegionalTestData = makeRegionalTestData('NL', {
+  title: 'Mr',
+  firstName: envOr('TEST_FIRSTNAME_NL', 'Test'),
+  lastName: envOr('TEST_LASTNAME_NL', 'User'),
+  street: envOr('TEST_STREET_NL', '123 Damrak'),
+  city: envOr('TEST_CITY_NL', 'Amsterdam'),
+  postalCode: envOr('TEST_POSTAL_NL', '1012'),
+  phone: envOr('TEST_PHONE_NL', '0612345678'),
+  country: 'NL',
+});
+
 export function getTestDataForRegion(region: string): RegionalTestData {
   const regionLower = region.toLowerCase();
-
-  if (regionLower.includes('au')) {
-    return TEST_DATA_AU;
-  } else if (regionLower.includes('th')) {
-    return TEST_DATA_TH;
-  } else if (regionLower.includes('fr')) {
-    return TEST_DATA_FR;
-  } else if (regionLower.includes('us')) {
-    return TEST_DATA_US;
-  } else if (regionLower.includes('jp')) {
-    return TEST_DATA_JP;
-  } else if (regionLower.includes('nl')) {
-    return TEST_DATA_NL;
-  }
-
-  // Default to FR
+  if (regionLower.includes('au')) return TEST_DATA_AU;
+  if (regionLower.includes('th')) return TEST_DATA_TH;
+  if (regionLower.includes('fr')) return TEST_DATA_FR;
+  if (regionLower.includes('us')) return TEST_DATA_US;
+  if (regionLower.includes('jp')) return TEST_DATA_JP;
+  if (regionLower.includes('nl')) return TEST_DATA_NL;
   return TEST_DATA_FR;
 }
 
-/**
- * Get test data based on project name
- * @param projectName - Playwright project name (e.g., 'celine-fr', 'celine-us')
- * @returns Regional test data
- */
 export function getTestDataForProject(projectName: string): RegionalTestData {
   return getTestDataForRegion(projectName);
 }
-
-

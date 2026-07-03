@@ -182,9 +182,12 @@ Running optimized test for region: ${testInfo.project.name}`);
         throw err;
       }
 
-      // Registered customer login (if password is configured for the region)
-      const loginPassword = testData.password || 'Test1234!';
-      await checkoutPage.login.loginAsRegistered(testData.email, loginPassword);
+      // Registered customer login — password MUST come from the env
+      // (TEST_PASSWORD_<REGION>). Sprint 1 removed the previous shared
+      // sandbox password fallback: a missing password now throws a clear
+      // "missing env var" error from testData rather than silently attempting
+      // a well-known credential.
+      await checkoutPage.login.loginAsRegistered(testData.email, testData.password!);
 
       console.log(`   Registered login done: ${maskEmailForLog(testData.email)}`);
 
