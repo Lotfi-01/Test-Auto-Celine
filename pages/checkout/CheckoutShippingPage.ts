@@ -3,8 +3,9 @@ import { BasePage } from '../BasePage';
 import { SHIPPING_METHOD_STRATEGY } from '../../utils/selectorStrategy';
 import { SELECTORS } from '../selectors';
 import { TIMEOUTS } from '../../config/testConfig';
-import { forceElementVisible, setNativeValue, forceCheckRadio } from '../../utils/formHelper';
+import { forceElementVisible } from '../../utils/formHelper';
 import { CivilitySelector } from './shipping/CivilitySelector';
+import { PickupDialogHandler, PickupDialogOptions } from './shipping/PickupDialogHandler';
 
 /**
  * Shipping address options interface
@@ -49,6 +50,7 @@ export class CheckoutShippingPage extends BasePage {
   readonly shippingPanel: Locator;
 
   private readonly civilitySelector: CivilitySelector;
+  private readonly pickupDialogHandler: PickupDialogHandler;
 
   constructor(page: Page) {
     super(page, 'Shipping');
@@ -72,6 +74,16 @@ export class CheckoutShippingPage extends BasePage {
     this.continueToPaymentButton = page.locator(SELECTORS.CHECKOUT.SHIPPING.CONTINUE_BUTTON).first();
     this.submitShippingButton = page.locator(SELECTORS.CHECKOUT.SHIPPING.SUBMIT_SHIPPING_BUTTON).first();
     this.shippingPanel = page.locator('section[data-osidepanel-name="shippingBillingForms"]').first();
+
+    // Sprint 4 — pickup dialog logic extracted to PickupDialogHandler.
+    // Depends on the civility selector (used as final fallback for the title
+    // radio inside the dialog) and on `continueToPaymentButton` (used by the
+    // submit → payment transition race).
+    this.pickupDialogHandler = new PickupDialogHandler(
+      page,
+      this.civilitySelector,
+      this.continueToPaymentButton
+    );
   }
 
   /**
@@ -505,53 +517,10 @@ export class CheckoutShippingPage extends BasePage {
    * The C&C form opens as a dialog/modal with different DOM IDs than the standard
    * shipping form, so we use accessible role/name selectors scoped to the dialog.
    */
-  async fillPickupAddressForm(options: {
-    title: 'Mr' | 'Mrs' | 'Ms' | 'M' | 'Mme' | 'Mlle';
-    firstName: string;
-    lastName: string;
-    firstNameKatakana?: string;
-    lastNameKatakana?: string;
-    address: string;
-    city: string;
-    state?: string;
-    postalCode: string;
-    phonePrefix?: string;
-    phone: string;
-  }): Promise<boolean> {
-    this.logStep('📝 Filling Pick-up address form');
-
-    const dialog = await this.getPurchaserDialog();
-    if (!dialog) return false;
-
-    // STATE FIRST — state selection can wipe other fields and reset title
-    if (options.state) {
-      await this.selectStateInDialog(options.state, dialog);
-    }
-
-    await this.selectCivilityInDialog(options.title, dialog);
-
-    // Postcode early (may trigger re-renders/autocomplete)
-    const postcodeLocator = dialog
-      .locator('input[id*="postal" i], input[id*="zip" i], input[name*="postal" i], input[name*="zip" i]')
-      .first();
-    try {
-      if (await postcodeLocator.isVisible({ timeout: 800 }).catch(() => false)) {
-        await setNativeValue(postcodeLocator, options.postalCode);
-        this.logSuccess(`Postcode set via native helper: "${options.postalCode}"`);
-      }
-    } catch (e) {
-      this.log(`Postcode set failed: ${(e as Error).message}`, 'warn');
-    }
-    // TODO Sprint 4: replace with stable shipping signal.
-    await this.page.waitForTimeout(60);
-
-    await this.fillPickupTextFields(options, dialog);
-    await this.fillKatakanaFields(options, dialog);
-    await this.fillPhoneFields(options, dialog);
-
-    await this.ensureFieldsBeforeSubmit(options, dialog);
-
-    return await this.submitPickupDialog(dialog);
+  async fillPickupAddressForm(options: PickupDialogOptions): Promise<boolean> {
+    // Sprint 4: dialog fill + submit extracted to PickupDialogHandler.
+    // Public signature and return contract are preserved 1:1.
+    return this.pickupDialogHandler.fillDialog(options);
   }
 
   /**
@@ -580,7 +549,7 @@ export class CheckoutShippingPage extends BasePage {
       const box = await pickupTab.boundingBox();
       if (box) {
         await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-        // TODO Sprint 4: replace with stable shipping signal.
+        // TODO Sprint 5: replace with stable shipping signal.
         await this.page.waitForTimeout(50);
         await pickupTab.click({ timeout: TIMEOUTS.medium });
       } else {
@@ -599,7 +568,7 @@ export class CheckoutShippingPage extends BasePage {
         const anyPickup = this.page.locator('button:has-text("PICK"), button:has-text("Click & Collect"), label:has-text("PICK-UP"), [data-delivery*="pickup"]').first();
         if (await anyPickup.isVisible({ timeout: 2000 }).catch(() => false)) {
           await anyPickup.click({ force: true }).catch(this.swallowOptional('pickup fallback force click'));
-          // TODO Sprint 4: replace with stable shipping signal.
+          // TODO Sprint 5: replace with stable shipping signal.
           await this.page.waitForTimeout(500);
           this.logSuccess('Clicked alternative pickup element');
         } else {
@@ -610,7 +579,7 @@ export class CheckoutShippingPage extends BasePage {
             const match = els.find(el => /pick.?up|click.?&.?collect/i.test(el.textContent || ''));
             if (match) (match as HTMLElement).click();
           }).catch(this.swallowOptional('pickup ultimate JS fallback click'));
-          // TODO Sprint 4: replace with stable shipping signal.
+          // TODO Sprint 5: replace with stable shipping signal.
           await this.page.waitForTimeout(1000);
           // Check again
           if (!(await pickupPanel.isVisible({ timeout: 2000 }).catch(() => false))) {
@@ -645,7 +614,7 @@ export class CheckoutShippingPage extends BasePage {
           tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
         })
         .catch(this.swallowOptional('pickup tab JS click + dispatch fallback'));
-      // TODO Sprint 4: replace with stable shipping signal.
+      // TODO Sprint 5: replace with stable shipping signal.
       await this.page.waitForTimeout(100);
       const ok = await isSelected();
       if (ok) {
@@ -972,469 +941,4 @@ export class CheckoutShippingPage extends BasePage {
     }
   }
 
-  /**
-   * Internal helper to submit the pickup purchaser dialog.
-   * Extracted for readability and easier maintenance.
-   */
-  private async submitPickupDialog(dialog: Locator): Promise<boolean> {
-    const submitLocalized = dialog
-      .getByRole('button', {
-        name: /submit address|valider.{0,10}adresse|住所|送信|adresse/i,
-      })
-      .first();
-    const submitStructural = dialog.locator('button[type="submit"]:visible, button.a-btn--primary:visible').last();
-
-    let submitClicked = false;
-    for (const candidate of [submitLocalized, submitStructural]) {
-      try {
-        await candidate.waitFor({ state: 'visible', timeout: TIMEOUTS.short });
-        await candidate.scrollIntoViewIfNeeded().catch(this.swallowOptional('pickup submit candidate scrollIntoView'));
-        await candidate.click({ force: true, timeout: TIMEOUTS.medium });
-        submitClicked = true;
-        break;
-      } catch {
-        // try next
-      }
-    }
-
-    if (!submitClicked) {
-      this.log('Failed to find/click pickup form SUBMIT button', 'error');
-      return false;
-    }
-    this.logSuccess('Pickup form SUBMIT ADDRESS clicked');
-
-    // Verify dialog closed
-    try {
-      await dialog.waitFor({ state: 'detached', timeout: TIMEOUTS.medium });
-    } catch {
-      const stillVisible = await dialog.isVisible().catch(() => false);
-      if (stillVisible) {
-        throw new Error('Pickup dialog is still open after SUBMIT — likely a validation error in the form');
-      }
-    }
-
-    // Wait for navigation to payment
-    await Promise.race([
-      this.page.waitForURL(/payment|paiement/, { timeout: TIMEOUTS.navigation }),
-      this.continueToPaymentButton.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation }),
-    ]).catch(() => {
-      this.log('Pickup submit did not transition to payment within navigation timeout', 'warn');
-    });
-
-    return true;
-  }
-
-  // ============================================================
-  // Private helpers for fillPickupAddressForm (deeper refactor)
-  // ============================================================
-
-  private async getPurchaserDialog(): Promise<Locator | null> {
-    const dialog = this.page
-      .locator('[role="dialog"]:visible')
-      .filter({
-        has: this.page.locator('input[id*="firstName" i], input[name*="firstName" i], input[id="billingPhoneNumber"]'),
-      })
-      .first();
-    try {
-      await dialog.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-      return dialog;
-    } catch {
-      this.log('Pick-up dialog not visible', 'warn');
-      return null;
-    }
-  }
-
-  private async selectStateInDialog(state: string, dialog: Locator): Promise<void> {
-    const labelMap: Record<string, string> = {
-      NSW: 'NEW SOUTH WALES',
-      VIC: 'VICTORIA',
-      QLD: 'QUEENSLAND',
-      WA: 'WESTERN AUSTRALIA',
-      SA: 'SOUTH AUSTRALIA',
-      TAS: 'TASMANIA',
-      NT: 'NORTHERN TERRITORY',
-      ACT: 'AUSTRALIAN CAPITAL TERRITORY',
-      NY: 'NEW YORK',
-      CA: 'CALIFORNIA',
-      TX: 'TEXAS',
-      FL: 'FLORIDA',
-      IL: 'ILLINOIS',
-      NJ: 'NEW JERSEY',
-      MA: 'MASSACHUSETTS',
-      WA_US: 'WASHINGTON',
-    };
-    const fullName = labelMap[state.toUpperCase()] || state;
-
-    const stateInfo = await this.page
-      .evaluate(
-        ({ fullStateName, abbr }: { fullStateName: string; abbr: string }) => {
-          const selects = Array.from(document.querySelectorAll('select')) as HTMLSelectElement[];
-          const matches = selects.filter((s) =>
-            Array.from(s.options).some((o) => {
-              const text = (o.textContent || '').trim().toUpperCase();
-              const val = (o.value || '').trim().toUpperCase();
-              return text === fullStateName.toUpperCase() || val === abbr.toUpperCase();
-            })
-          );
-          const visible = matches.find((s) => {
-            const cs = window.getComputedStyle(s);
-            return cs.display !== 'none' && cs.visibility !== 'hidden' && s.offsetParent !== null;
-          });
-          const found = visible || matches[0];
-          if (!found) return null;
-          return { id: found.id, name: found.name };
-        },
-        { fullStateName: fullName, abbr: state }
-      )
-      .catch(() => null);
-
-    if (stateInfo && (stateInfo.id || stateInfo.name)) {
-      const sel = stateInfo.id
-        ? `select[id="${stateInfo.id.replace(/"/g, '\\"')}"]`
-        : `select[name="${stateInfo.name.replace(/"/g, '\\"')}"]`;
-      // Prefer the select inside the dialog if present
-      let stateSelect = dialog.locator(sel).first();
-      if (!(await stateSelect.isVisible({ timeout: 300 }).catch(() => false))) {
-        stateSelect = this.page.locator(sel).first();
-      }
-      let selected = false;
-      for (const candidate of [fullName, state, state.toUpperCase()]) {
-        try {
-          await stateSelect.selectOption({ label: candidate });
-          selected = true;
-          break;
-        } catch {
-          try {
-            await stateSelect.selectOption(candidate);
-            selected = true;
-            break;
-          } catch {}
-        }
-      }
-      await stateSelect
-        .evaluate((el) => (el as HTMLSelectElement).dispatchEvent(new Event('blur', { bubbles: true })))
-        .catch(this.swallowOptional('state select post-select blur dispatch'));
-      if (selected) {
-        this.logSuccess(`State selected first: ${state}`);
-        // TODO Sprint 4: replace with stable shipping signal.
-        await this.page.waitForTimeout(150);
-      } else {
-        this.log(`Could not select state: ${state}`, 'warn');
-      }
-    } else {
-      this.log(`State select not found page-wide`, 'warn');
-    }
-  }
-
-  private async selectCivilityInDialog(title: string, dialog: Locator): Promise<void> {
-    const titleAcceptable = (() => {
-      const t = title.toLowerCase();
-      const variants: Record<string, string[]> = {
-        mr: ['mr', 'm', 'mr.'],
-        m: ['m', 'mr', 'mr.'],
-        mrs: ['mrs', 'mme', 'mrs.'],
-        mme: ['mme', 'mrs', 'mrs.'],
-        ms: ['ms', 'mlle', 'miss', 'ms.'],
-        mlle: ['mlle', 'ms', 'miss', 'ms.'],
-      };
-      return variants[t] || ['mr', 'm', 'mrs', 'mme', 'ms', 'mlle'];
-    })();
-
-    let selected = false;
-
-    try {
-      // Strategy A: Use accessible role + name inside the dialog (best for modern a11y)
-      for (const token of titleAcceptable) {
-        const radioByRole = dialog.getByRole('radio', { name: new RegExp(token, 'i') }).first();
-        if (await radioByRole.isVisible({ timeout: 300 }).catch(() => false)) {
-          await forceCheckRadio(radioByRole);
-          this.logSuccess(`Civility radio checked (role+name): ${token}`);
-          selected = true;
-          break;
-        }
-      }
-
-      if (!selected) {
-        // Strategy B: Find label by text inside dialog, then associated input
-        for (const token of titleAcceptable) {
-          const label = dialog.locator('label').filter({ hasText: new RegExp(token, 'i') }).first();
-          if (await label.isVisible({ timeout: 300 }).catch(() => false)) {
-            const forId = await label.getAttribute('for').catch(() => null);
-            let radio: Locator;
-            if (forId) {
-              radio = dialog.locator(`#${forId.replace(/"/g, '\\"')}`);
-            } else {
-              // fallback to sibling or descendant radio
-              radio = label.locator('xpath=preceding-sibling::input[1] | xpath=following-sibling::input[1] | input[type="radio"]').first();
-            }
-            if (await radio.count() > 0 && await radio.isVisible({ timeout: 200 }).catch(() => false)) {
-              await forceCheckRadio(radio);
-              this.logSuccess(`Civility radio checked (label text): ${token}`);
-              selected = true;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!selected) {
-        // Strategy C: any radio inside dialog whose label, value or id matches
-        const allRadios = dialog.locator('input[type="radio"]');
-        const count = await allRadios.count().catch(() => 0);
-        for (let i = 0; i < count; i++) {
-          const radio = allRadios.nth(i);
-          const id = await radio.getAttribute('id').catch(() => '');
-          const val = (await radio.getAttribute('value').catch(() => '') || '').toLowerCase();
-          let labelText = '';
-          if (id) {
-            labelText = await dialog.locator(`label[for="${id}"]`).textContent().catch(() => '') || '';
-          }
-          if (!labelText) {
-            labelText = await radio.getAttribute('aria-label').catch(() => '') || '';
-          }
-          const lowerLabel = (labelText + ' ' + val + ' ' + id).toLowerCase().replace(/\./g, '');
-          if (titleAcceptable.some(tok => lowerLabel.includes(tok))) {
-            await forceCheckRadio(radio);
-            this.logSuccess(`Civility radio checked (dialog scan): ${labelText.trim() || val || id}`);
-            selected = true;
-            break;
-          }
-        }
-      }
-
-      if (!selected) {
-        // Fallback to the broad robust helper (page level)
-        selected = await this.civilitySelector.select(title, dialog);
-        if (selected) {
-          this.logSuccess(`Civility radio checked (fallback helper): ${title}`);
-        }
-      }
-    } catch (e) {
-      this.log(`Civility selection error in dialog: ${(e as Error).message}`, 'warn');
-    }
-
-    if (!selected) {
-      this.log('Could not reliably select civility title', 'warn');
-    }
-
-    // Sprint 3: `waitForTimeout(60)` removed — `forceCheckRadio` dispatches
-    // `input`/`change`/`click` synchronously, so the check state is committed
-    // before this returns. The caller (`fillPickupAddressForm`) immediately
-    // reads the postcode field via `isVisible({ timeout: 800 })`, which is
-    // itself a proper web-first wait for any re-render triggered by the
-    // civility change.
-  }
-
-  private async fillByLabelInDialog(dialog: Locator, name: RegExp, value: string, label: string): Promise<boolean> {
-    // IMPORTANT: scope to the dialog!
-    let tb: Locator | null = null;
-
-    // Strategy 1: accessible name via role (preferred)
-    const byRole = dialog.getByRole('textbox', { name });
-    const roleCount = await byRole.count().catch(() => 0);
-    for (let i = 0; i < roleCount; i++) {
-      const candidate = byRole.nth(i);
-      if (await candidate.isVisible().catch(() => false)) {
-        tb = candidate;
-        break;
-      }
-    }
-
-    // Strategy 2: common ID/name patterns inside dialog (more reliable for Celine dialogs)
-    if (!tb) {
-      const commonSelectors = [
-        'input[id*="firstName" i]:not([id*="Alternate"])',
-        'input[name*="firstName" i]:not([name*="Alternate"])',
-        'input[id*="lastName" i]:not([id*="Alternate"])',
-        'input[name*="lastName" i]:not([name*="Alternate"])',
-        'input[id*="addressOne" i], input[id*="address1" i]',
-        'input[name*="addressOne" i], input[name*="address1" i]',
-        'input[id*="city" i], input[name*="city" i]',
-        'input[id*="postal" i], input[id*="zip" i]',
-        'input[id*="phone" i], input[name*="phone" i]',
-      ];
-      for (const sel of commonSelectors) {
-        const candidate = dialog.locator(sel).first();
-        if (await candidate.isVisible({ timeout: 200 }).catch(() => false)) {
-          // Only use if the label name regex roughly matches or for specific labels
-          const idOrName = (await candidate.getAttribute('id')) || (await candidate.getAttribute('name')) || '';
-          if (name.test(idOrName) || label.toLowerCase().includes('first') || label.toLowerCase().includes('last') || label.toLowerCase().includes('city') || label.toLowerCase().includes('address')) {
-            tb = candidate;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!tb) {
-      this.log(`${label} visible field not found`, 'warn');
-      return false;
-    }
-    try {
-      await tb.scrollIntoViewIfNeeded().catch(this.swallowOptional(`${label} tb scrollIntoView`));
-      await tb.click({ timeout: TIMEOUTS.short }).catch(this.swallowOptional(`${label} tb focus click`));
-      await tb.fill('').catch(this.swallowOptional(`${label} tb pre-clear`));
-      await tb.pressSequentially(value, { delay: 50 });
-      await tb.blur().catch(this.swallowOptional(`${label} tb post-fill blur`));
-      this.logSuccess(`${label} filled: "${await tb.inputValue().catch(() => '?')}"`);
-      // TODO Sprint 4: replace with stable shipping signal.
-      await this.page.waitForTimeout(50);
-      return true;
-    } catch (err) {
-      this.log(`${label} fill failed: ${(err as Error).message}`, 'warn');
-      return false;
-    }
-  }
-
-  private async fillPickupTextFields(options: any, dialog: Locator): Promise<void> {
-    await this.fillByLabelInDialog(dialog, /first name|prénom|prenom|名|お名前/i, options.firstName, 'First name');
-    await this.fillByLabelInDialog(dialog, /last name|nom de famille|^nom$|姓|苗字/i, options.lastName, 'Last name');
-
-    const addressLocator = dialog
-      .locator('#billingAddressOne, input[id*="addressOne" i], input[name*="addressOne" i], input[id*="address1" i], input[name*="address1" i]')
-      .first();
-    try {
-      if (await addressLocator.isVisible({ timeout: 800 }).catch(() => false)) {
-        await setNativeValue(addressLocator, options.address);
-        this.logSuccess(`Street/Home address set via native helper`);
-      }
-    } catch (e) {
-      this.log(`Address set failed: ${(e as Error).message}`, 'warn');
-    }
-    // TODO Sprint 4: replace with stable shipping signal.
-    await this.page.waitForTimeout(50);
-
-    await this.fillByLabelInDialog(dialog, /suburb|^city$|town|district|ville|市|区|町/i, options.city, 'City/Suburb/District');
-  }
-
-  private async fillKatakanaFields(options: any, dialog: Locator): Promise<void> {
-    if (!options.firstNameKatakana && !options.lastNameKatakana) return;
-
-    const kanaSelectors = [
-      'input[id*="FirstnameAlternate" i], input[name*="FirstnameAlternate" i], input[id*="firstNameKana" i]',
-      'input[id*="LastnameAlternate" i], input[name*="LastnameAlternate" i], input[id*="lastNameKana" i]',
-    ];
-
-    if (options.firstNameKatakana) {
-      const el = dialog.locator(kanaSelectors[0]).first();
-      if (await el.isVisible({ timeout: 600 }).catch(() => false)) {
-        await setNativeValue(el, options.firstNameKatakana);
-      }
-    }
-    if (options.lastNameKatakana) {
-      const el = dialog.locator(kanaSelectors[1]).first();
-      if (await el.isVisible({ timeout: 600 }).catch(() => false)) {
-        await setNativeValue(el, options.lastNameKatakana);
-      }
-    }
-    this.logSuccess('Katakana names set via native helper');
-    // TODO Sprint 4: replace with stable shipping signal.
-    await this.page.waitForTimeout(50);
-  }
-
-  private async fillPhoneFields(options: any, dialog: Locator): Promise<void> {
-    if (options.phonePrefix) {
-      const prefixSelect = dialog.getByRole('combobox', { name: /country code|prefix/i }).first();
-      try {
-        await prefixSelect.waitFor({ state: 'visible', timeout: TIMEOUTS.short });
-        await prefixSelect.selectOption(options.phonePrefix);
-        this.logSuccess(`Phone prefix selected: ${options.phonePrefix}`);
-      } catch {
-        this.log('Phone prefix select not present in pickup dialog', 'info');
-      }
-    }
-
-    const phoneTb = dialog
-      .locator('#billingPhoneNumber, input[name="dwfrm_billing_addressFields_phone"]')
-      .first();
-    try {
-      await phoneTb.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-      await phoneTb.scrollIntoViewIfNeeded().catch(this.swallowOptional('phoneTb scrollIntoView'));
-      await phoneTb.click({ timeout: TIMEOUTS.short }).catch(this.swallowOptional('phoneTb focus click'));
-      await phoneTb.fill('').catch(this.swallowOptional('phoneTb pre-clear'));
-      await phoneTb.fill(options.phone);
-      let filled = await phoneTb.inputValue().catch(() => '');
-      if (!filled) {
-        await phoneTb.type(options.phone, { delay: 50 });
-        filled = await phoneTb.inputValue().catch(() => '');
-      }
-      await phoneTb.blur().catch(this.swallowOptional('phoneTb post-fill blur'));
-      this.logSuccess(`Phone number filled: "${filled}"`);
-    } catch (err) {
-      this.log(`Phone number fill failed: ${(err as Error).message}`, 'warn');
-    }
-  }
-
-  private async ensureFieldsBeforeSubmit(options: any, dialog: Locator): Promise<void> {
-    try {
-      const snapshot = await dialog
-        .evaluate((root) => {
-          const inputs = Array.from(root.querySelectorAll('input, select')) as (HTMLInputElement | HTMLSelectElement)[];
-          return inputs
-            .filter((el) => {
-              const cs = window.getComputedStyle(el);
-              return cs.display !== 'none' && cs.visibility !== 'hidden' && (el as HTMLElement).offsetParent !== null;
-            })
-            .map((el) => ({
-              tag: el.tagName,
-              type: (el as HTMLInputElement).type || '',
-              id: el.id,
-              name: el.name,
-              value: el.value,
-            }));
-        })
-        .catch(() => [] as Array<{ tag: string; type: string; id: string; name: string; value: string }>);
-
-      const empties = snapshot.filter((f) => f.tag === 'INPUT' && /text|tel|email/.test(f.type) && !f.value);
-      if (empties.length) {
-        this.log(`Pre-submit empty fields detected: ${empties.map((e) => e.id || e.name).join(', ')}`, 'warn');
-      }
-
-      const refillReport = await this.page
-        .evaluate((data) => {
-          const isVisible = (el: HTMLElement) => {
-            const cs = window.getComputedStyle(el);
-            return cs.display !== 'none' && cs.visibility !== 'hidden' && el.offsetParent !== null;
-          };
-          const findVisible = (selector: string): HTMLInputElement | null => {
-            const els = Array.from(document.querySelectorAll(selector)) as HTMLInputElement[];
-            return els.find(isVisible) || null;
-          };
-          const setNative = (el: HTMLInputElement, val: string) => {
-            const proto = Object.getPrototypeOf(el);
-            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-            if (setter) setter.call(el, val);
-            else el.value = val;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            el.dispatchEvent(new Event('blur', { bubbles: true }));
-          };
-          const fields: Array<{ sel: string; val: string; label: string }> = [
-            { sel: 'input[id*="firstName" i]:not([id*="Alternate" i]), input[name*="firstName" i]:not([name*="Alternate" i])', val: data.firstName, label: 'firstName' },
-            { sel: 'input[id*="lastName" i]:not([id*="Alternate" i]), input[name*="lastName" i]:not([name*="Alternate" i])', val: data.lastName, label: 'lastName' },
-            { sel: 'input[id*="addressOne" i], input[id*="address1" i], input[name*="addressOne" i], input[name*="address1" i]', val: data.address, label: 'address' },
-            { sel: 'input[id*="city" i], input[name*="city" i]', val: data.city, label: 'city' },
-            { sel: 'input[id*="postal" i], input[id*="zip" i], input[name*="postal" i], input[name*="zip" i]', val: data.postalCode, label: 'postcode' },
-            { sel: '#billingPhoneNumber, input[id*="phone" i], input[name*="phone" i]', val: data.phone, label: 'phone' },
-          ];
-          if (data.firstNameKatakana) fields.push({ sel: 'input[id*="FirstnameAlternate" i], input[name*="FirstnameAlternate" i], input[id*="firstNameKana" i]', val: data.firstNameKatakana, label: 'firstNameKana' });
-          if (data.lastNameKatakana) fields.push({ sel: 'input[id*="LastnameAlternate" i], input[name*="LastnameAlternate" i], input[id*="lastNameKana" i]', val: data.lastNameKatakana, label: 'lastNameKana' });
-
-          const report: Record<string, string> = {};
-          for (const f of fields) {
-            const el = findVisible(f.sel);
-            if (!el) { report[f.label] = 'NOT_FOUND'; continue; }
-            if (el.value && el.value.trim() === f.val.trim()) { report[f.label] = 'OK_ALREADY'; continue; }
-            setNative(el, f.val);
-            report[f.label] = `SET="${el.value}" id=${el.id || el.name}`;
-          }
-          return report;
-        }, options)
-        .catch((err) => ({ error: (err as Error).message }));
-
-      this.log(`Refill report: ${JSON.stringify(refillReport)}`, 'info');
-      // TODO Sprint 4: replace with stable shipping signal.
-      await this.page.waitForTimeout(100);
-    } catch {}
-  }
 }
