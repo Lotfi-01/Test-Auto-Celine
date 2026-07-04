@@ -4,6 +4,7 @@ import { SHIPPING_METHOD_STRATEGY } from '../../utils/selectorStrategy';
 import { SELECTORS } from '../selectors';
 import { TIMEOUTS } from '../../config/testConfig';
 import { forceElementVisible, setNativeValue, forceCheckRadio } from '../../utils/formHelper';
+import { CivilitySelector } from './shipping/CivilitySelector';
 
 /**
  * Shipping address options interface
@@ -47,8 +48,11 @@ export class CheckoutShippingPage extends BasePage {
   readonly submitShippingButton: Locator;
   readonly shippingPanel: Locator;
 
+  private readonly civilitySelector: CivilitySelector;
+
   constructor(page: Page) {
     super(page, 'Shipping');
+    this.civilitySelector = new CivilitySelector(page);
 
     // Address form fields - using centralized selectors
     this.firstNameInput = page.locator(SELECTORS.CHECKOUT.SHIPPING.FIRST_NAME).first();
@@ -68,6 +72,20 @@ export class CheckoutShippingPage extends BasePage {
     this.continueToPaymentButton = page.locator(SELECTORS.CHECKOUT.SHIPPING.CONTINUE_BUTTON).first();
     this.submitShippingButton = page.locator(SELECTORS.CHECKOUT.SHIPPING.SUBMIT_SHIPPING_BUTTON).first();
     this.shippingPanel = page.locator('section[data-osidepanel-name="shippingBillingForms"]').first();
+  }
+
+  /**
+   * Sprint 3 — replaces silent catch handlers on optional steps.
+   * Returns a catch handler that logs the failure at debug level with the
+   * given `label` context. Never rethrows — the calling flow keeps going
+   * exactly as it did with the previous no-op catch. Same pattern as
+   * `utils/selectorStrategy.ts:swallowOptional`.
+   */
+  private swallowOptional(label: string): (err: unknown) => void {
+    return (err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.log(`${label} skipped: ${msg}`, 'debug');
+    };
   }
 
   /**
@@ -96,9 +114,11 @@ export class CheckoutShippingPage extends BasePage {
     if (!filled) return false;
     this.logSuccess(`Postal code filled: ${postalCode}`);
 
-    // Minimal wait + tab to trigger validation on some sites (US zip unlock)
-    await this.page.waitForTimeout(100);
-    await postalCodeInput.press('Tab').catch(() => {});
+    // Sprint 3: waitForTimeout(100) padding removed — the Tab press already
+    // triggers the async validation, and `clickOkButton` below has its own
+    // `submitZipButton.waitFor({ state: 'visible' })` so the OK button
+    // becoming ready is a proper web-first signal.
+    await postalCodeInput.press('Tab').catch(this.swallowOptional('postal code Tab blur'));
 
     // Click OK button using multiple strategies
     const okClicked = await this.clickOkButton();
@@ -125,7 +145,7 @@ export class CheckoutShippingPage extends BasePage {
           const btn = el as HTMLButtonElement;
           return !btn.disabled && !btn.hasAttribute('disabled');
         }, await submitZipButton.elementHandle(), { timeout: TIMEOUTS.medium })
-        .catch(() => {});
+        .catch(this.swallowOptional('waitForFunction OK-button-enabled'));
 
       if (await this.safeClick(submitZipButton, { timeout: TIMEOUTS.short })) {
         await this.waitForNetworkIdle(TIMEOUTS.medium);
@@ -173,142 +193,13 @@ export class CheckoutShippingPage extends BasePage {
     const isPanel = await this.shippingPanel.isVisible({ timeout: 1000 }).catch(() => false);
     const scope = isPanel ? this.shippingPanel : this.page;
 
-    const success = await this._selectCivilityRobust(title, scope);
+    // Sprint 3: robust civility logic extracted to CivilitySelector (same
+    // 3-strategy fallback, same evaluate()-based broad scan, same event order).
+    const success = await this.civilitySelector.select(title, scope);
     if (success) {
       this.logSuccess(`Title selected: ${title}`);
     }
     return success;
-  }
-
-  /**
-   * Robust civility (title) selection that works for both main shipping form
-   * and the Click & Collect purchaser dialog.
-   * Tries specific selectors first, then label text, then broad title radio search.
-   */
-  private async _selectCivilityRobust(title: string, scope: Locator | Page = this.page): Promise<boolean> {
-    const inputMap: Record<string, string> = {
-      Mr: SELECTORS.CHECKOUT.SHIPPING.TITLE_MR_INPUT,
-      M: SELECTORS.CHECKOUT.SHIPPING.TITLE_MR_INPUT,
-      Mrs: SELECTORS.CHECKOUT.SHIPPING.TITLE_MRS_INPUT,
-      Mme: SELECTORS.CHECKOUT.SHIPPING.TITLE_MRS_INPUT,
-      Ms: SELECTORS.CHECKOUT.SHIPPING.TITLE_MS_INPUT,
-      Mlle: SELECTORS.CHECKOUT.SHIPPING.TITLE_MS_INPUT,
-    };
-
-    const labelMap: Record<string, string> = {
-      Mr: SELECTORS.CHECKOUT.SHIPPING.TITLE_MR_LABEL,
-      M: SELECTORS.CHECKOUT.SHIPPING.TITLE_MR_LABEL,
-      Mrs: SELECTORS.CHECKOUT.SHIPPING.TITLE_MRS_LABEL,
-      Mme: SELECTORS.CHECKOUT.SHIPPING.TITLE_MRS_LABEL,
-      Ms: SELECTORS.CHECKOUT.SHIPPING.TITLE_MS_LABEL,
-      Mlle: SELECTORS.CHECKOUT.SHIPPING.TITLE_MS_LABEL,
-    };
-
-    const inputSelector = inputMap[title];
-    const labelSelector = labelMap[title];
-
-    // Strategy 1: Specific selectors (works for standard shipping form and sometimes in dialog)
-    if (inputSelector && labelSelector) {
-      const input = scope.locator(inputSelector).first();
-      let clicked = await this.safeClick(input, { timeout: TIMEOUTS.short, force: true }).catch(() => false);
-      if (!clicked) {
-        const label = scope.locator(labelSelector).first();
-        clicked = await this.safeClick(label, { timeout: TIMEOUTS.medium }).catch(() => false);
-      }
-      if (!clicked) {
-        try {
-          await forceCheckRadio(input);
-          clicked = true;
-        } catch {}
-      }
-      if (clicked) return true;
-    }
-
-    // Strategy 2: Label text match (case-insensitive, handles "MR.", "Mr", "M." etc.)
-    const titleAcceptable = (() => {
-      const t = title.toLowerCase();
-      const variants: Record<string, string[]> = {
-        mr: ['mr', 'm', 'mr.'],
-        m: ['m', 'mr', 'mr.'],
-        mrs: ['mrs', 'mme', 'mrs.'],
-        mme: ['mme', 'mrs', 'mrs.'],
-        ms: ['ms', 'mlle', 'miss', 'ms.'],
-        mlle: ['mlle', 'ms', 'miss', 'ms.'],
-      };
-      return variants[t] || ['mr', 'm', 'mrs', 'mme', 'ms', 'mlle'];
-    })();
-
-    for (const token of titleAcceptable) {
-      // Try inside scope first
-      const byLabel = scope.locator(`label:has-text("${token}"), label[for*="${token}"]`).first();
-      if (await byLabel.isVisible({ timeout: 400 }).catch(() => false)) {
-        const forAttr = (await byLabel.getAttribute('for').catch(() => '')) || '';
-        const input = scope.locator(`input#${forAttr.replace(/"/g, '\\"')}, input[type="radio"]`).first();
-        try {
-          await forceCheckRadio(input);
-          return true;
-        } catch {}
-      }
-    }
-
-    // Strategy 3: Robust broad search for any title radio (original reliable logic)
-    // Search for radios that look like title/civility (by name, id, or nearby label)
-    try {
-      const result = await this.page.evaluate(
-        ({ acceptable }: { acceptable: string[] }) => {
-          const isVisible = (el: HTMLElement) => {
-            const cs = window.getComputedStyle(el);
-            return cs.display !== 'none' && cs.visibility !== 'hidden' && el.offsetParent !== null;
-          };
-
-          const radios = Array.from(document.querySelectorAll('input[type="radio"]')) as HTMLInputElement[];
-          const titleRadios = radios.filter((r) => /title/i.test(r.name) || /title/i.test(r.id) || /civility/i.test(r.name) || /civility/i.test(r.id));
-
-          const visibleRadios = titleRadios.filter(isVisible);
-          const candidates = visibleRadios.length ? visibleRadios : titleRadios;
-
-          const norm = (s: string) => s.toLowerCase().replace(/\./g, '').trim();
-
-          const findRadio = (token: string) =>
-            candidates.find((r) => {
-              const labelText = (r.labels && r.labels[0]?.textContent) || r.getAttribute('aria-label') || r.value || '';
-              return norm(labelText).includes(norm(token)) || norm(token).includes(norm(labelText));
-            });
-
-          let target: HTMLInputElement | undefined;
-          for (const tok of acceptable) {
-            target = findRadio(tok);
-            if (target) break;
-          }
-          if (!target) target = candidates[0]; // last resort: first title-like radio
-
-          if (!target) return { ok: false };
-
-          // Use forceCheckRadio logic inline for reliability
-          const proto = Object.getPrototypeOf(target);
-          const setter = Object.getOwnPropertyDescriptor(proto, 'checked')?.set;
-          if (setter) setter.call(target, true);
-          else target.checked = true;
-
-          target.dispatchEvent(new Event('input', { bubbles: true }));
-          target.dispatchEvent(new Event('change', { bubbles: true }));
-          const label = target.labels?.[0];
-          if (label) label.click();
-          target.click();
-
-          return { ok: target.checked, matched: (target.labels?.[0]?.textContent || '').trim() };
-        },
-        { acceptable: titleAcceptable }
-      ).catch(() => ({ ok: false }));
-
-      if (result.ok) {
-        return true;
-      }
-    } catch (e) {
-      this.log(`Broad title radio search failed: ${(e as Error).message}`, 'warn');
-    }
-
-    return false;
   }
 
   /**
@@ -392,7 +283,7 @@ export class CheckoutShippingPage extends BasePage {
       await locator.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
 
       // Scroll into view if needed
-      await locator.scrollIntoViewIfNeeded().catch(() => {});
+      await locator.scrollIntoViewIfNeeded().catch(this.swallowOptional('fillField scrollIntoView'));
 
       // Explicit focus before filling
       await locator.focus();
@@ -590,7 +481,7 @@ export class CheckoutShippingPage extends BasePage {
             }
           }
         })
-        .catch(() => {});
+        .catch(this.swallowOptional('address form belt-and-suspenders requestSubmit'));
 
       // Wait for actual transition — URL change OR continue-to-payment button.
       // Use the navigation timeout (30s) not formSubmit (3s) — JP server-side validation
@@ -651,6 +542,7 @@ export class CheckoutShippingPage extends BasePage {
     } catch (e) {
       this.log(`Postcode set failed: ${(e as Error).message}`, 'warn');
     }
+    // TODO Sprint 4: replace with stable shipping signal.
     await this.page.waitForTimeout(60);
 
     await this.fillPickupTextFields(options, dialog);
@@ -683,11 +575,12 @@ export class CheckoutShippingPage extends BasePage {
     ).first();
     try {
       await pickupTab.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-      await pickupTab.scrollIntoViewIfNeeded().catch(() => {});
+      await pickupTab.scrollIntoViewIfNeeded().catch(this.swallowOptional('pickup tab scrollIntoView'));
       // Move mouse to the button and click via the page.mouse API (most "trusted" interaction)
       const box = await pickupTab.boundingBox();
       if (box) {
         await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        // TODO Sprint 4: replace with stable shipping signal.
         await this.page.waitForTimeout(50);
         await pickupTab.click({ timeout: TIMEOUTS.medium });
       } else {
@@ -705,7 +598,8 @@ export class CheckoutShippingPage extends BasePage {
         this.log('Trying last resort click for pickup option...', 'warn');
         const anyPickup = this.page.locator('button:has-text("PICK"), button:has-text("Click & Collect"), label:has-text("PICK-UP"), [data-delivery*="pickup"]').first();
         if (await anyPickup.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await anyPickup.click({ force: true }).catch(() => {});
+          await anyPickup.click({ force: true }).catch(this.swallowOptional('pickup fallback force click'));
+          // TODO Sprint 4: replace with stable shipping signal.
           await this.page.waitForTimeout(500);
           this.logSuccess('Clicked alternative pickup element');
         } else {
@@ -715,7 +609,8 @@ export class CheckoutShippingPage extends BasePage {
             const els = Array.from(document.querySelectorAll('button, label, a, div[role="tab"]'));
             const match = els.find(el => /pick.?up|click.?&.?collect/i.test(el.textContent || ''));
             if (match) (match as HTMLElement).click();
-          }).catch(() => {});
+          }).catch(this.swallowOptional('pickup ultimate JS fallback click'));
+          // TODO Sprint 4: replace with stable shipping signal.
           await this.page.waitForTimeout(1000);
           // Check again
           if (!(await pickupPanel.isVisible({ timeout: 2000 }).catch(() => false))) {
@@ -749,7 +644,8 @@ export class CheckoutShippingPage extends BasePage {
           tab.click();
           tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
         })
-        .catch(() => {});
+        .catch(this.swallowOptional('pickup tab JS click + dispatch fallback'));
+      // TODO Sprint 4: replace with stable shipping signal.
       await this.page.waitForTimeout(100);
       const ok = await isSelected();
       if (ok) {
@@ -769,10 +665,12 @@ export class CheckoutShippingPage extends BasePage {
     }
 
     const storeId = await firstStoreLabel.getAttribute('for').catch(() => null);
-    await firstStoreLabel.scrollIntoViewIfNeeded().catch(() => {});
+    await firstStoreLabel.scrollIntoViewIfNeeded().catch(this.swallowOptional('firstStoreLabel scrollIntoView'));
 
-    // Try Playwright click first (natural trusted event)
-    await firstStoreLabel.click({ timeout: TIMEOUTS.short }).catch(() => {});
+    // Try Playwright click first (natural trusted event). Failure is expected
+    // on some UIs where the label click is swallowed; the JS fallback below
+    // is the actual invariant.
+    await firstStoreLabel.click({ timeout: TIMEOUTS.short }).catch(this.swallowOptional('firstStoreLabel Playwright click (JS fallback follows)'));
 
     // Verify the linked radio is now checked; if not, force-click via JS (Celine handler is finicky)
     const isStoreChecked = async () =>
@@ -798,7 +696,7 @@ export class CheckoutShippingPage extends BasePage {
             input.click();
           }
         }, storeId)
-        .catch(() => {});
+        .catch(this.swallowOptional('store JS click + dispatch fallback'));
     }
 
     if (await isStoreChecked()) {
@@ -868,14 +766,14 @@ export class CheckoutShippingPage extends BasePage {
         const radio = this.page.locator('input[type="radio"][name*="shippingMethod"], input.shipping-method-selector').first();
         if (await radio.isVisible({ timeout: 1500 }).catch(() => false)) {
           await radio.click({ force: true }).catch(async () => {
-            await radio.evaluate((el: HTMLElement) => el.click()).catch(() => {});
+            await radio.evaluate((el: HTMLElement) => el.click()).catch(this.swallowOptional('shipping method radio JS click fallback'));
           });
           clicked = true;
         } else {
           const label = this.page.locator('label[for*="shippingMethod"], label:has(input[type="radio"])').first();
           if (await label.isVisible({ timeout: 1500 }).catch(() => false)) {
             await label.click({ force: true }).catch(async () => {
-              await label.evaluate((el: HTMLElement) => el.click()).catch(() => {});
+              await label.evaluate((el: HTMLElement) => el.click()).catch(this.swallowOptional('shipping method label JS click fallback'));
             });
             clicked = true;
           }
@@ -933,7 +831,8 @@ export class CheckoutShippingPage extends BasePage {
 
     // Wait up to navigation timeout for the URL to change. The address submit can take
     // 10-15s on slow regions (JP) before the URL flips to /payment.
-    await this.page.waitForURL(/payment|paiement/, { timeout: TIMEOUTS.navigation }).catch(() => {});
+    await this.page.waitForURL(/payment|paiement/, { timeout: TIMEOUTS.navigation })
+      .catch(this.swallowOptional('waitForURL /payment (pre-check)'));
 
     // 1) URL on payment? Done.
     const currentUrl = this.page.url();
@@ -948,7 +847,8 @@ export class CheckoutShippingPage extends BasePage {
       const clicked = await this.safeClick(this.continueToPaymentButton, { timeout: TIMEOUTS.short });
       if (clicked) {
         this.logSuccess('Continued to payment (clicked button)');
-        await this.page.waitForURL(/payment|paiement/, { timeout: TIMEOUTS.navigation }).catch(() => {});
+        await this.page.waitForURL(/payment|paiement/, { timeout: TIMEOUTS.navigation })
+          .catch(this.swallowOptional('waitForURL /payment (post-continue click)'));
         return true;
       }
     }
@@ -1033,7 +933,8 @@ export class CheckoutShippingPage extends BasePage {
 
       // For registered prefilled, the button can be in DOM but reported hidden by visibility checks (CSS/overlay).
       // Wait attached first, then attempt force/JS click without strict visible requirement.
-      await this.submitShippingButton.waitFor({ state: 'attached', timeout: TIMEOUTS.medium }).catch(() => {});
+      await this.submitShippingButton.waitFor({ state: 'attached', timeout: TIMEOUTS.medium })
+        .catch(this.swallowOptional('submitShippingButton waitFor attached'));
 
       const isAttached = await this.submitShippingButton.count().then(c => c > 0).catch(() => false);
       if (!isAttached) {
@@ -1042,12 +943,13 @@ export class CheckoutShippingPage extends BasePage {
       }
 
       // Scroll + force/JS click path (preferred for prefilled registered case)
-      await this.submitShippingButton.scrollIntoViewIfNeeded().catch(() => {});
+      await this.submitShippingButton.scrollIntoViewIfNeeded().catch(this.swallowOptional('submitShippingButton scrollIntoView'));
 
       let clicked = await this.safeClick(this.submitShippingButton, { timeout: TIMEOUTS.short, force: true });
 
       if (!clicked) {
-        await this.submitShippingButton.evaluate((el: HTMLElement) => (el as HTMLButtonElement).click()).catch(() => {});
+        await this.submitShippingButton.evaluate((el: HTMLElement) => (el as HTMLButtonElement).click())
+          .catch(this.swallowOptional('submitShippingButton JS click fallback'));
         clicked = true;
       }
 
@@ -1055,8 +957,13 @@ export class CheckoutShippingPage extends BasePage {
         this.logSuccess('Submit shipping button clicked (#submitShippingBtn)');
       }
 
-      // Give time for any async address verification or panel to process
-      await this.page.waitForTimeout(150);
+      // Sprint 3: the previous `waitForTimeout(150)` was blind padding. The
+      // real signal after a form submit is the document reaching
+      // `domcontentloaded`. Timeout is bounded so a stuck submit still surfaces
+      // via the caller's own next assertion, not a silent sleep.
+      await this.page
+        .waitForLoadState('domcontentloaded', { timeout: 1000 })
+        .catch(this.swallowOptional('post submit-shipping DOM settle'));
 
       return clicked;
     } catch (e) {
@@ -1081,7 +988,7 @@ export class CheckoutShippingPage extends BasePage {
     for (const candidate of [submitLocalized, submitStructural]) {
       try {
         await candidate.waitFor({ state: 'visible', timeout: TIMEOUTS.short });
-        await candidate.scrollIntoViewIfNeeded().catch(() => {});
+        await candidate.scrollIntoViewIfNeeded().catch(this.swallowOptional('pickup submit candidate scrollIntoView'));
         await candidate.click({ force: true, timeout: TIMEOUTS.medium });
         submitClicked = true;
         break;
@@ -1206,9 +1113,10 @@ export class CheckoutShippingPage extends BasePage {
       }
       await stateSelect
         .evaluate((el) => (el as HTMLSelectElement).dispatchEvent(new Event('blur', { bubbles: true })))
-        .catch(() => {});
+        .catch(this.swallowOptional('state select post-select blur dispatch'));
       if (selected) {
         this.logSuccess(`State selected first: ${state}`);
+        // TODO Sprint 4: replace with stable shipping signal.
         await this.page.waitForTimeout(150);
       } else {
         this.log(`Could not select state: ${state}`, 'warn');
@@ -1296,7 +1204,7 @@ export class CheckoutShippingPage extends BasePage {
 
       if (!selected) {
         // Fallback to the broad robust helper (page level)
-        selected = await this._selectCivilityRobust(title, dialog);
+        selected = await this.civilitySelector.select(title, dialog);
         if (selected) {
           this.logSuccess(`Civility radio checked (fallback helper): ${title}`);
         }
@@ -1309,7 +1217,12 @@ export class CheckoutShippingPage extends BasePage {
       this.log('Could not reliably select civility title', 'warn');
     }
 
-    await this.page.waitForTimeout(60);
+    // Sprint 3: `waitForTimeout(60)` removed — `forceCheckRadio` dispatches
+    // `input`/`change`/`click` synchronously, so the check state is committed
+    // before this returns. The caller (`fillPickupAddressForm`) immediately
+    // reads the postcode field via `isVisible({ timeout: 800 })`, which is
+    // itself a proper web-first wait for any re-render triggered by the
+    // civility change.
   }
 
   private async fillByLabelInDialog(dialog: Locator, name: RegExp, value: string, label: string): Promise<boolean> {
@@ -1358,12 +1271,13 @@ export class CheckoutShippingPage extends BasePage {
       return false;
     }
     try {
-      await tb.scrollIntoViewIfNeeded().catch(() => {});
-      await tb.click({ timeout: TIMEOUTS.short }).catch(() => {});
-      await tb.fill('').catch(() => {});
+      await tb.scrollIntoViewIfNeeded().catch(this.swallowOptional(`${label} tb scrollIntoView`));
+      await tb.click({ timeout: TIMEOUTS.short }).catch(this.swallowOptional(`${label} tb focus click`));
+      await tb.fill('').catch(this.swallowOptional(`${label} tb pre-clear`));
       await tb.pressSequentially(value, { delay: 50 });
-      await tb.blur().catch(() => {});
+      await tb.blur().catch(this.swallowOptional(`${label} tb post-fill blur`));
       this.logSuccess(`${label} filled: "${await tb.inputValue().catch(() => '?')}"`);
+      // TODO Sprint 4: replace with stable shipping signal.
       await this.page.waitForTimeout(50);
       return true;
     } catch (err) {
@@ -1387,6 +1301,7 @@ export class CheckoutShippingPage extends BasePage {
     } catch (e) {
       this.log(`Address set failed: ${(e as Error).message}`, 'warn');
     }
+    // TODO Sprint 4: replace with stable shipping signal.
     await this.page.waitForTimeout(50);
 
     await this.fillByLabelInDialog(dialog, /suburb|^city$|town|district|ville|市|区|町/i, options.city, 'City/Suburb/District');
@@ -1413,6 +1328,7 @@ export class CheckoutShippingPage extends BasePage {
       }
     }
     this.logSuccess('Katakana names set via native helper');
+    // TODO Sprint 4: replace with stable shipping signal.
     await this.page.waitForTimeout(50);
   }
 
@@ -1433,16 +1349,16 @@ export class CheckoutShippingPage extends BasePage {
       .first();
     try {
       await phoneTb.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-      await phoneTb.scrollIntoViewIfNeeded().catch(() => {});
-      await phoneTb.click({ timeout: TIMEOUTS.short }).catch(() => {});
-      await phoneTb.fill('').catch(() => {});
+      await phoneTb.scrollIntoViewIfNeeded().catch(this.swallowOptional('phoneTb scrollIntoView'));
+      await phoneTb.click({ timeout: TIMEOUTS.short }).catch(this.swallowOptional('phoneTb focus click'));
+      await phoneTb.fill('').catch(this.swallowOptional('phoneTb pre-clear'));
       await phoneTb.fill(options.phone);
       let filled = await phoneTb.inputValue().catch(() => '');
       if (!filled) {
         await phoneTb.type(options.phone, { delay: 50 });
         filled = await phoneTb.inputValue().catch(() => '');
       }
-      await phoneTb.blur().catch(() => {});
+      await phoneTb.blur().catch(this.swallowOptional('phoneTb post-fill blur'));
       this.logSuccess(`Phone number filled: "${filled}"`);
     } catch (err) {
       this.log(`Phone number fill failed: ${(err as Error).message}`, 'warn');
@@ -1517,6 +1433,7 @@ export class CheckoutShippingPage extends BasePage {
         .catch((err) => ({ error: (err as Error).message }));
 
       this.log(`Refill report: ${JSON.stringify(refillReport)}`, 'info');
+      // TODO Sprint 4: replace with stable shipping signal.
       await this.page.waitForTimeout(100);
     } catch {}
   }
