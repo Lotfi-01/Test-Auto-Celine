@@ -39,42 +39,50 @@ supprimé : uniquement les étapes optionnelles (scrollIntoView, blur,
 fill(''), JS click fallback, waitForURL avant DOM check, evaluate
 belt-and-suspenders).
 
+Sprint 4 n'a **pas modifié** le total : l'extraction de `PickupDialogHandler`
+déplace du code 1:1 (le pattern `swallowOptional(label)` de Sprint 3 est
+reproduit à l'identique côté helper), et aucun nouveau silent catch n'est
+introduit dans les logiques déplacées. Le baseline reste à 32.
+
 **Évolution du baseline** :
 
-| Sprint | Total | Fichiers concernés | Δ          |
-| ------ | ----: | -----------------: | ---------- |
-| 1      |    82 |                  8 | (baseline) |
-| 2      |    60 |                  4 | **−22**    |
-| 3      |    32 |                  3 | **−28**    |
+| Sprint | Total | Fichiers concernés | Δ               |
+| ------ | ----: | -----------------: | --------------- |
+| 1      |    82 |                  8 | (baseline)      |
+| 2      |    60 |                  4 | **−22**         |
+| 3      |    32 |                  3 | **−28**         |
+| 4      |    32 |                  3 | 0 (extract 1:1) |
 
-**État du baseline après Sprint 3** (source de vérité —
+**État du baseline après Sprint 4** (source de vérité —
 `scripts/silent-catch.baseline.json`, figé le **2026-07-04**) :
 
-| Fichier                                  | Sprint 1 | Sprint 2 | Sprint 3 | Δ S3 |
-| ---------------------------------------- | -------: | -------: | -------: | ---: |
-| `pages/checkout/CheckoutShippingPage.ts` |       28 |       28 |    **0** |  −28 |
-| `pages/checkout/CheckoutPaymentPage.ts`  |       23 |       23 |       23 |    0 |
-| `tests/celine-purchase.spec.ts`          |        7 |        7 |        7 |    0 |
-| `utils/formHelper.ts`                    |        2 |        2 |        2 |    0 |
-| `pages/CelineProductPage.ts`             |        7 |        0 |        0 |    0 |
-| `utils/selectorStrategy.ts`              |        6 |        0 |        0 |    0 |
-| `pages/BasePage.ts`                      |        5 |        0 |        0 |    0 |
-| `pages/checkout/CheckoutLoginPage.ts`    |        4 |        0 |        0 |    0 |
-| **Total**                                |   **82** |   **60** |   **32** |  −28 |
+| Fichier                                          | Sprint 1 | Sprint 2 | Sprint 3 | Sprint 4 |
+| ------------------------------------------------ | -------: | -------: | -------: | -------: |
+| `pages/checkout/CheckoutShippingPage.ts`         |       28 |       28 |    **0** |        0 |
+| `pages/checkout/shipping/PickupDialogHandler.ts` |      N/A |      N/A |      N/A |    **0** |
+| `pages/checkout/shipping/CivilitySelector.ts`    |      N/A |      N/A |    **0** |        0 |
+| `pages/checkout/CheckoutPaymentPage.ts`          |       23 |       23 |       23 |       23 |
+| `tests/celine-purchase.spec.ts`                  |        7 |        7 |        7 |        7 |
+| `utils/formHelper.ts`                            |        2 |        2 |        2 |        2 |
+| `pages/CelineProductPage.ts`                     |        7 |        0 |        0 |        0 |
+| `utils/selectorStrategy.ts`                      |        6 |        0 |        0 |        0 |
+| `pages/BasePage.ts`                              |        5 |        0 |        0 |        0 |
+| `pages/checkout/CheckoutLoginPage.ts`            |        4 |        0 |        0 |        0 |
+| **Total**                                        |   **82** |   **60** |   **32** |   **32** |
 
 Les 32 occurrences restantes sont concentrées à 72 % dans
-`CheckoutPaymentPage.ts` — hors périmètre Sprint 3 par consigne (flows PSP
-PayPal, Afterpay, Adyen, Cybersource, 3DS). À traiter Sprint 4 après
+`CheckoutPaymentPage.ts` — hors périmètre Sprint 4 par consigne (flows PSP
+PayPal, Afterpay, Adyen, Cybersource, 3DS). À traiter Sprint 5 après
 extraction préalable des helpers PayPal/Afterpay/3DS.
 
 Les 7 occurrences restantes dans `tests/celine-purchase.spec.ts` sont des
 `.catch(() => {})` autour d'actions de fallback UI (zip OK button, force
-click shipping label). Elles seront traitées Sprint 4 en même temps que le
+click shipping label). Elles seront traitées Sprint 5 en même temps que le
 découpage du mégatest.
 
 Les 2 dans `utils/formHelper.ts` sont sur des étapes optionnelles
 (`scrollIntoView`, `clear`) au sein de wrappers `Result<T>` — traitables
-sans risque en Sprint 4 avec la même approche `logger.debug`.
+sans risque en Sprint 5 avec la même approche `logger.debug`.
 
 Fichiers qui n'apparaissent PAS dans le baseline (0 silent catch strict) mais
 qui restent dans l'override ESLint parce qu'ils contiennent d'autres patterns
@@ -117,12 +125,13 @@ sécuritaires par des signaux DOM/URL/response.
 
 **Évolution `waitForTimeout` (calls réels dans pages/tests/utils)** :
 
-| Sprint | Total | Détail                                                                                          |
-| ------ | ----: | ----------------------------------------------------------------------------------------------- |
-| 1      |    32 | 13 Shipping, 7 Payment, 5 spec, 5 Login, 2 Product                                              |
-| 2      |    28 | idem sauf : spec −2 (JP/NL loading + form-panel padding), Login −2 (padding autour du Tab blur) |
-| 3      |    25 | idem sauf : Shipping 13 → 10                                                                    |
-| Δ      |    −7 |                                                                                                 |
+| Sprint | Total | Détail                                                                                                             |
+| ------ | ----: | ------------------------------------------------------------------------------------------------------------------ |
+| 1      |    32 | 13 Shipping, 7 Payment, 5 spec, 5 Login, 2 Product                                                                 |
+| 2      |    28 | idem sauf : spec −2 (JP/NL loading + form-panel padding), Login −2 (padding autour du Tab blur)                    |
+| 3      |    25 | idem sauf : Shipping 13 → 10                                                                                       |
+| 4      |    25 | idem — 10 sleeps Shipping split entre Shipping (4) et PickupDialogHandler (6). Extraction 1:1, aucune suppression. |
+| Δ      |    −7 |                                                                                                                    |
 
 Remplacements Sprint 2 :
 
@@ -150,19 +159,23 @@ signal DOM) :
   le caller `fillPickupAddressForm` a un `isVisible({timeout: 800})` juste
   après sur le champ postcode qui couvre tout re-render.
 
-**Sleeps restants dans Shipping (10) — annotés `TODO Sprint 4:
+**Sleeps restants dans Shipping (4) — annotés `TODO Sprint 5:
 replace with stable shipping signal.` dans le code** :
 
-- `fillPickupAddressForm` : 1 × 60 ms post `setNativeValue(postcode)` —
-  autocomplete potentiel, pas de signal fiable identifié.
 - `selectClickAndCollect` : 4 × sleeps dans les fallbacks pickup
   (50 ms mouse-move, 500 ms fallback click force, 1000 ms JS ultimate
   fallback, 100 ms dispatch fallback). Chemins rares, sleeps courts.
+
+**Sleeps restants dans PickupDialogHandler (6) — annotés
+`TODO Sprint 5: replace with stable pickup signal.` dans le code** :
+
+- `fillDialog` : 1 × 60 ms post `setNativeValue(postcode)` — autocomplete
+  potentiel, pas de signal fiable identifié.
 - `selectStateInDialog` : 1 × 150 ms post-`selectOption` — Celine
   re-render partiel post state select (AU/US).
 - `fillByLabelInDialog` : 1 × 50 ms post `pressSequentially` + blur —
   padding onchange, pas de signal réseau identifié.
-- `fillPickupTextFields` : 1 × 50 ms post `setNativeValue(address)`.
+- `fillTextFields` : 1 × 50 ms post `setNativeValue(address)`.
 - `fillKatakanaFields` : 1 × 50 ms post `setNativeValue(kana)`.
 - `ensureFieldsBeforeSubmit` : 1 × 100 ms post refill report — padding
   avant SUBMIT, non observable.
@@ -170,15 +183,15 @@ replace with stable shipping signal.` dans le code** :
 **Sleeps restants hors Shipping (15) — hors périmètre Sprint 3** :
 
 - `tests/celine-purchase.spec.ts` (2) : 2 marqués `TODO Sprint 3`
-  Adyen/Cybersource hydration, à ré-évaluer Sprint 4 après extraction
+  Adyen/Cybersource hydration, à ré-évaluer Sprint 5 après extraction
   helpers Payment.
 - `pages/checkout/CheckoutLoginPage.ts` (3) : polling intervals dans les
   boucles `for` (100 ms × 3). Signaux propres non disponibles côté
-  Celine — refactor plus profond en Sprint 4.
+  Celine — refactor plus profond en Sprint 5.
 - `pages/CelineProductPage.ts` (2) : 20 ms + 50 ms — inspections rapides
   post-clic size/panel close. Non-critique en durée cumulée, on laisse.
-- `pages/checkout/CheckoutPaymentPage.ts` (7) : **hors périmètre Sprint 3**
-  (flows PSP interdits par la consigne). À traiter Sprint 4 après extraction
+- `pages/checkout/CheckoutPaymentPage.ts` (7) : **hors périmètre Sprint 4**
+  (flows PSP interdits par la consigne). À traiter Sprint 5 après extraction
   des helpers PayPal/Afterpay/3DS.
 - `utils/orderNumber.ts` (1) : polling loop du numéro de commande —
   volontairement laissée car couvre la latence de rendu confirmation.
@@ -188,12 +201,21 @@ replace with stable shipping signal.` dans le code** :
 ## 3. Fichiers trop gros (F-M1)
 
 - `pages/checkout/CheckoutShippingPage.ts` — Sprint 3 : `CivilitySelector`
-  extrait vers `pages/checkout/shipping/CivilitySelector.ts`. Le fichier
-  reste massif (≈ 1400 lignes après extraction civilité + `swallowOptional`
-  factorisé), mais commence à devenir un orchestrateur : la logique
-  civilité est isolée et unit-testée. Reste à extraire `PickupDialogHandler`,
-  `AddressFormFiller` en Sprint 4.
-- `pages/checkout/CheckoutPaymentPage.ts` — 851 lignes → extraire les flows PayPal / Afterpay / 3DS (Sprint 4).
+  extrait. Sprint 4 : `PickupDialogHandler` extrait (core Pickup / C&C
+  déplacé 1:1). Le fichier passe de ~1440 → 944 lignes (−34 %). L'API
+  publique (`selectClickAndCollect`, `fillPickupAddressForm`) reste sur
+  la façade et délègue au handler. `AddressFormFiller` reste à extraire
+  en Sprint 5.
+- `pages/checkout/shipping/PickupDialogHandler.ts` — **nouveau (Sprint 4)** :
+  720 lignes. **Au-dessus du seuil `~500 lignes` fixé pour un helper
+  ciblé**. La taille vient : (a) du full state-label map US+AU
+  (`pickupStateLabelFor`), (b) des 3 stratégies civilité intra-dialog
+  (~100 lignes), (c) de `ensureFieldsBeforeSubmit` avec son `page.evaluate`
+  de refill (~110 lignes), (d) des commentaires PII-safety Sprint 4.
+  À traiter Sprint 5 : extraire `PickupCivilityStrategy` (les 3 stratégies
+  intra-dialog) et simplifier `ensureFieldsBeforeSubmit` pour ramener le
+  handler sous ~500 lignes.
+- `pages/checkout/CheckoutPaymentPage.ts` — 851 lignes → extraire les flows PayPal / Afterpay / 3DS (Sprint 5).
 - `utils/emailReporter.ts` — 630 lignes → séparer template HTML / SMTP transport.
 - `tests/celine-purchase.spec.ts` — 507 lignes → splitter en 4-5 specs ciblés.
 
@@ -300,29 +322,33 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 4 (backlog priorisé)
+## 10. Actions Sprint 5 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **`PickupDialogHandler`** — extraire de `CheckoutShippingPage.ts`
-   (getPurchaserDialog + selectStateInDialog + selectCivilityInDialog +
-   fillPickupTextFields + fillKatakanaFields + fillPhoneFields +
-   ensureFieldsBeforeSubmit + submitPickupDialog). Retire une ≈500 lignes
-   du fichier orchestrateur.
-2. **`CheckoutPaymentPage.ts` refactor** — extraire helpers PayPal,
+1. **Simplifier `PickupDialogHandler`** — extraire `PickupCivilityStrategy`
+   (les 3 stratégies intra-dialog représentent ~100 lignes) et alléger
+   `ensureFieldsBeforeSubmit` (~110 lignes de `page.evaluate` refill).
+   Cible : ramener le handler sous ~500 lignes.
+2. **`AddressFormFiller`** — extraire les blocs `fillShippingAddress`,
+   `fillField`, `fillOptionalField`, `ensureFormVisible`, `tryOpenFormToggle`
+   de `CheckoutShippingPage.ts` (~200 lignes). Rapprocherait la façade
+   d'un orchestrateur pur.
+3. **`CheckoutPaymentPage.ts` refactor** — extraire helpers PayPal,
    Afterpay, Adyen, 3DS. Après extraction : liquider les 23 silent catches
-   restants avec `swallowOptional` (même pattern que Sprint 2/3).
-3. **`storageState` par région** — global-setup persistant pour supprimer
+   restants avec `swallowOptional` (même pattern que Sprint 2/3/4).
+4. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
-4. **Split du mégatest** — découper `celine-purchase.spec.ts` en
+5. **Split du mégatest** — découper `celine-purchase.spec.ts` en
    `product.spec.ts`, `checkout-login.spec.ts`, `checkout-shipping.spec.ts`,
    `checkout-payment.spec.ts`, `checkout-confirmation.spec.ts`.
-5. **7 silent catches spec + 2 formHelper** — traiter au fil du split
+6. **7 silent catches spec + 2 formHelper** — traiter au fil du split
    ci-dessus (target : baseline total < 10).
-6. **10 `waitForTimeout` Shipping** — remplacer par des signaux réels
-   après extraction `PickupDialogHandler` (chaque sleep aura enfin un
-   scope local suffisamment étroit pour identifier son vrai signal).
-7. **Historique Git** — purger `.claude/settings.local.json` et
+7. **10 `waitForTimeout` Shipping+PickupDialogHandler** — remplacer par des signaux réels
+   maintenant que le scope pickup est isolé dans son propre handler.
+   Chaque sleep a désormais un contexte local suffisamment étroit pour
+   identifier un signal DOM/URL fiable.
+8. **Historique Git** — purger `.claude/settings.local.json` et
    `%TEMP%install-qwen.bat` (voir §9), après validation humaine.
 
 ---
