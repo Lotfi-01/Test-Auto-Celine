@@ -61,6 +61,42 @@ export class CheckoutPaymentPage extends BasePage {
   }
 
   /**
+   * Sprint 8 — replaces the 23 historical silent-catch handlers (empty-body
+   * `.catch` arrow) on optional payment steps (scrollIntoView, DOM settle,
+   * event dispatch, Cybersource optional fills, terms fallbacks, PayPal /
+   * Afterpay landing races). Returns a catch handler that logs the failure
+   * at `debug` level with the given technical `label`. Never rethrows —
+   * every calling flow keeps its previous fail-open semantics.
+   *
+   * PII policy (Payment, strict):
+   *   - `label` MUST be a static, technical step name — never a variable
+   *     derived from `options.*`, form values, tokens, payloads, order or
+   *     transaction identifiers.
+   *   - The error is surfaced as `error.name` only — never `.message`,
+   *     never `String(error)`, never `JSON.stringify(error)`.
+   *
+   * Same shape as `CheckoutShippingPage.swallowOptional` (Sprint 3),
+   * hardened for the Payment surface where card, CVV, expiry, tokens and
+   * PSP payloads live nearby.
+   */
+  private swallowOptional(label: string): (err: unknown) => void {
+    return (err) => {
+      this.log(`Optional payment step failed: ${label} (${this.errorName(err)})`, 'debug');
+    };
+  }
+
+  /**
+   * PII-safe error tag for logs. Never returns `.message` — the message
+   * string may embed selectors, PSP endpoints, or card-field field-ids
+   * that could leak information in a failure trace. `error.name`
+   * (`TimeoutError`, `Error`, `TargetClosedError`, …) is enough for
+   * triage and value-free.
+   */
+  private errorName(err: unknown): string {
+    return err instanceof Error && err.name ? err.name : 'UnknownError';
+  }
+
+  /**
    * Select credit card as payment method.
    * Primary: explicit click on #lb_scheme + force #rb_scheme + events (required for guest flows).
    * We no longer blindly trust "adyen panel visible == selected" because guest and registered
@@ -80,7 +116,7 @@ export class CheckoutPaymentPage extends BasePage {
     await this.page.waitForLoadState('domcontentloaded');
 
     // Early expand if the payment section header is present (some flows collapse it)
-    await this.expandPaymentSection().catch(() => {});
+    await this.expandPaymentSection().catch(this.swallowOptional('expand payment section'));
 
     // Wait for the exact credit card label to appear (longer timeout for guest flows where payment options load slower)
     await this.page.waitForSelector('#lb_scheme', { state: 'visible', timeout: 10000 }).catch(() => {
@@ -96,7 +132,9 @@ export class CheckoutPaymentPage extends BasePage {
       const ccRadio = this.page.getByRole('radio', { name: /credit card/i }).first();
       const isChecked = await ccRadio.isChecked().catch(() => false);
       if (!isChecked) {
-        await ccRadio.check({ force: true }).catch(() => {});
+        await ccRadio
+          .check({ force: true })
+          .catch(this.swallowOptional('Cybersource CC radio force-check'));
       }
       await CybersourceHelper.waitForPaymentForm(this.page, TIMEOUTS.navigation);
       this.logSuccess('Credit card payment option selected (Cybersource)');
@@ -160,7 +198,9 @@ export class CheckoutPaymentPage extends BasePage {
     const clicked = await this.safeClick(paymentHeader, { timeout: TIMEOUTS.short });
     if (clicked) {
       this.logSuccess('Payment section clicked to expand');
-      await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+      await this.page
+        .waitForLoadState('domcontentloaded')
+        .catch(this.swallowOptional('post-expand DOM settle'));
     }
   }
 
@@ -181,9 +221,11 @@ export class CheckoutPaymentPage extends BasePage {
 
     // Try label click (preferred) - try without force first for better event triggering
     try {
-      await label.scrollIntoViewIfNeeded().catch(() => {});
+      await label.scrollIntoViewIfNeeded().catch(this.swallowOptional('CC label scrollIntoView'));
       await label.click({ timeout: 1500 }).catch(async () => {
-        await label.click({ force: true, timeout: 1500 }).catch(() => {});
+        await label
+          .click({ force: true, timeout: 1500 })
+          .catch(this.swallowOptional('CC label force-click fallback'));
       });
       this.log('Clicked CREDIT CARD label');
     } catch {
@@ -192,7 +234,7 @@ export class CheckoutPaymentPage extends BasePage {
 
     // Force the radio + events (multiple dispatches for Adyen)
     try {
-      await radio.scrollIntoViewIfNeeded().catch(() => {});
+      await radio.scrollIntoViewIfNeeded().catch(this.swallowOptional('CC radio scrollIntoView'));
       await radio.check({ force: true });
       await radio.evaluate((el: HTMLInputElement) => {
         el.checked = true;
@@ -222,7 +264,9 @@ export class CheckoutPaymentPage extends BasePage {
         '#lb_scheme, label[for="rb_scheme"], .adyen-checkout__payment-methods, label:has-text("CREDIT CARD"), label:has-text("Credit Card"), [role="radiogroup"]',
         { state: 'visible', timeout }
       );
-      await this.page.waitForLoadState('domcontentloaded', { timeout: 3000 }).catch(() => {});
+      await this.page
+        .waitForLoadState('domcontentloaded', { timeout: 3000 })
+        .catch(this.swallowOptional('CC ready DOM settle'));
     } catch {
       this.log('Credit card option selectors did not appear within timeout', 'warn');
     }
@@ -280,14 +324,22 @@ export class CheckoutPaymentPage extends BasePage {
   private async fillPaymentInfoCybersource(options: PaymentOptions): Promise<boolean> {
     // Cardholder NAME ON CARD
     const holder = this.page.getByRole('textbox', { name: /name on card/i }).first();
-    await holder.waitFor({ state: 'visible', timeout: TIMEOUTS.element }).catch(() => {});
-    await holder.fill(options.cardholderName).catch(() => {});
+    await holder
+      .waitFor({ state: 'visible', timeout: TIMEOUTS.element })
+      .catch(this.swallowOptional('Cybersource cardholder field wait'));
+    await holder
+      .fill(options.cardholderName)
+      .catch(this.swallowOptional('Cybersource cardholder field fill'));
     this.logSuccess('Cardholder name filled (Cybersource)');
 
     // Expiration date — placeholder MM/YY
     const expiry = this.page.locator('input[placeholder="MM/YY" i], input[placeholder*="MM/YY" i]').first();
-    await expiry.waitFor({ state: 'visible', timeout: TIMEOUTS.element }).catch(() => {});
-    await expiry.fill(options.expirationDate).catch(() => {});
+    await expiry
+      .waitFor({ state: 'visible', timeout: TIMEOUTS.element })
+      .catch(this.swallowOptional('Cybersource expiry field wait'));
+    await expiry
+      .fill(options.expirationDate)
+      .catch(this.swallowOptional('Cybersource expiry field fill'));
     this.logSuccess('Expiration date filled (Cybersource)');
 
     // Card number iframe + CVV iframe
@@ -370,7 +422,9 @@ export class CheckoutPaymentPage extends BasePage {
       await termsCheckbox.waitFor({ state: 'attached', timeout: TIMEOUTS.element });
 
       // 1) Try the standard force-check
-      await this.safeCheck(termsCheckbox, { force: true }).catch(() => {});
+      await this.safeCheck(termsCheckbox, { force: true }).catch(
+        this.swallowOptional('Terms checkbox force-check')
+      );
       if (await termsCheckbox.isChecked().catch(() => false)) {
         this.logSuccess('Terms & conditions accepted');
         return true;
@@ -381,7 +435,9 @@ export class CheckoutPaymentPage extends BasePage {
       if (id) {
         const escapedId = id.replace(/\./g, '\\.');
         const label = this.page.locator(`label[for="${escapedId}"]`).first();
-        await label.click({ force: true, timeout: TIMEOUTS.short }).catch(() => {});
+        await label
+          .click({ force: true, timeout: TIMEOUTS.short })
+          .catch(this.swallowOptional('Terms label click fallback'));
         if (await termsCheckbox.isChecked().catch(() => false)) {
           this.logSuccess('Terms & conditions accepted (via label)');
           return true;
@@ -396,7 +452,7 @@ export class CheckoutPaymentPage extends BasePage {
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.dispatchEvent(new Event('change', { bubbles: true }));
         })
-        .catch(() => {});
+        .catch(this.swallowOptional('Terms JS dispatch fallback'));
       if (await termsCheckbox.isChecked().catch(() => false)) {
         this.logSuccess('Terms & conditions accepted (via JS dispatch)');
         return true;
@@ -494,12 +550,14 @@ export class CheckoutPaymentPage extends BasePage {
     const paypalRadio = this.page.locator('#rb_paypal, #select-payment-method-PAYPAL').first();
 
     await paypalLabel.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-    await paypalLabel.scrollIntoViewIfNeeded().catch(() => {});
+    await paypalLabel
+      .scrollIntoViewIfNeeded()
+      .catch(this.swallowOptional('PayPal label scrollIntoView'));
     // Give Celine's billing form 2s to fully hydrate its radio change-listeners
     // before clicking — otherwise the click fires before listeners are attached
     // and the Submit button stays disabled.
     await this.page.waitForTimeout(300);
-    await paypalLabel.click().catch(() => {});
+    await paypalLabel.click().catch(this.swallowOptional('PayPal label click'));
 
     // Force the radio into checked state AND fire the event chain the page listens for.
     await paypalRadio
@@ -508,7 +566,7 @@ export class CheckoutPaymentPage extends BasePage {
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
       })
-      .catch(() => {});
+      .catch(this.swallowOptional('PayPal radio dispatch'));
 
     if (!(await paypalRadio.isChecked().catch(() => false))) {
       throw new Error('PayPal radio is not checked after click + dispatch');
@@ -564,7 +622,7 @@ export class CheckoutPaymentPage extends BasePage {
       throw new Error('PayPal CTA not found on top page or any PayPal iframe within timeout');
     }
 
-    await paypalCta.scrollIntoViewIfNeeded().catch(() => {});
+    await paypalCta.scrollIntoViewIfNeeded().catch(this.swallowOptional('PayPal CTA scrollIntoView'));
 
     // 4) Arm popup listener BEFORE clicking — PayPal SDK opens a popup window
     const popupPromise = this.page.context().waitForEvent('page', { timeout: TIMEOUTS.navigation });
@@ -642,10 +700,12 @@ export class CheckoutPaymentPage extends BasePage {
     const afterpayRadio = this.page.locator('#rb_afterpaytouch').first();
 
     await afterpayLabel.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-    await afterpayLabel.scrollIntoViewIfNeeded().catch(() => {});
+    await afterpayLabel
+      .scrollIntoViewIfNeeded()
+      .catch(this.swallowOptional('Afterpay label scrollIntoView'));
     // 2s wait for Celine's billing-form hydration before triggering the radio change.
     await this.page.waitForTimeout(300);
-    await afterpayLabel.click().catch(() => {});
+    await afterpayLabel.click().catch(this.swallowOptional('Afterpay label click'));
 
     await afterpayRadio
       .evaluate((el: HTMLInputElement) => {
@@ -653,7 +713,7 @@ export class CheckoutPaymentPage extends BasePage {
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
       })
-      .catch(() => {});
+      .catch(this.swallowOptional('Afterpay radio dispatch'));
 
     if (!(await afterpayRadio.isChecked().catch(() => false))) {
       throw new Error('Afterpay radio is not checked after click + dispatch');
@@ -682,7 +742,9 @@ export class CheckoutPaymentPage extends BasePage {
     //    (b) saved session: "Welcome back!" with cached identity → click "Not you?"
     //        to reset (cached identity often belongs to a different sandbox tester
     //        and its password won't match ours)
-    await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+    await this.page
+      .waitForLoadState('domcontentloaded')
+      .catch(this.swallowOptional('Afterpay portal DOM settle'));
 
     const emailInput = this.page.locator('[data-testid="login-identity-input"]').first();
     const notYouBtn = this.page.getByRole('button', { name: /Not you/i }).first();
@@ -691,7 +753,7 @@ export class CheckoutPaymentPage extends BasePage {
     await Promise.race([
       emailInput.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation }),
       notYouBtn.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation }),
-    ]).catch(() => {});
+    ]).catch(this.swallowOptional('Afterpay landing screen race'));
 
     if (!(await emailInput.isVisible({ timeout: 500 }).catch(() => false))) {
       // Saved-session screen — reset identity
