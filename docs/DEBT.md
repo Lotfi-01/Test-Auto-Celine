@@ -338,17 +338,18 @@ replace with stable shipping signal.` dans le code** :
   614 lignes (−106). Sprint 6 : `PickupRefillGuard` extrait
   (bloc `ensureFieldsBeforeSubmit`) → 614 → 485 lignes (−129, −21 %).
   Sprint 15 : `PickupStateSelector` extrait (bloc `selectStateInDialog`
-  - `STATE_LABEL_MAP` + `pickupStateLabelFor`) → **485 → 406 lignes
-    (−79, −16 %)**. **Cumul Sprint 5+6+15 : 720 → 406 (−314, −44 %).**
-    `selectStateInDialog` reste une méthode privée façade qui délègue à
-    `this.pickupStateSelector.select(state, dialog)`. `pickupStateLabelFor`
-    est re-exporté depuis le handler pour préserver l'import du spec
-    unitaire existant (`tests/unit/PickupDialogHandler.spec.ts`) — aucune
-    modification de test requise. La taille restante vient : (a) de
-    `fillByLabelInDialog` avec ses 2 stratégies + retries (~75 L),
-    (b) des commentaires PII-safety Sprint 4, (c) des méthodes de
-    remplissage restantes (`fillTextFields`, `fillKatakanaFields`,
-    `fillPhoneFields`, `submitDialog`).
+  - `STATE_LABEL_MAP` + `pickupStateLabelFor`) → 485 → 406 lignes
+    (−79, −16 %). Sprint 16 : `PickupDialogFieldFiller` extrait
+    (bloc `fillByLabelInDialog`) → **406 → 352 lignes (−54, −13 %)**.
+    **Cumul Sprint 5+6+15+16 : 720 → 352 (−368, −51 %).**
+    `fillByLabelInDialog` reste une méthode privée façade qui délègue à
+    `this.pickupDialogFieldFiller.fillByLabel(dialog, name, value, label)`.
+    La taille restante vient : (a) des méthodes de remplissage
+    orchestratrices (`fillTextFields`, `fillKatakanaFields`,
+    `fillPhoneFields` — ~90 L cumulés utilisant `setNativeValue` ou
+    `fillByLabelInDialog`), (b) de `submitDialog` avec ses 2 stratégies
+    de bouton submit + waitForURL race (~50 L), (c) de `fillDialog`
+    orchestrateur (~40 L), (d) des commentaires PII-safety Sprint 4.
 - `pages/checkout/shipping/PickupCivilityStrategy.ts` — **nouveau (Sprint 5)** :
   164 lignes. 3 stratégies A/B/C intra-dialog + fallback D vers
   `CivilitySelector`. Réutilise `civilityTokens` — pas de duplication.
@@ -373,6 +374,20 @@ replace with stable shipping signal.` dans le code** :
   — même pattern que Sprint 7 hotfix 2 pour
   `AddressFormFiller.selectStateOrPrefecture`. Comportement runtime
   strictement 1:1.
+- `pages/checkout/shipping/PickupDialogFieldFiller.ts` — **nouveau
+  (Sprint 16)** : 149 lignes. Contient uniquement la classe
+  `PickupDialogFieldFiller` avec `fillByLabel(dialog, name, value, label)`
+  — 2 stratégies fallback (`getByRole('textbox', {name})` puis
+  common id/name patterns firstName/lastName/addressOne/city/postal/
+  phone) + `pressSequentially` avec 50 ms delay + blur + 50 ms
+  waitForTimeout marker. Constructor `(page: Page)` — dépendance unique.
+  Aucun import `PickupDialogHandler` (pas de cycle). Logger
+  `TestLogger.scoped('PickupField')`. Primitives locales
+  `swallowOptional` + `errorName` PII-safe. Le label paramètre est une
+  chaîne statique fournie par le caller (`'First name'`,
+  `'Last name'`, etc.) — jamais une valeur user. La `value` (raw user
+  input) n'est jamais loguée : le success emet uniquement
+  `` `${label} filled` ``.
 - `pages/checkout/shipping/AddressFormFiller.ts` — **nouveau (Sprint 7)** :
   437 lignes. Contient `fillShippingAddress(options)` +
   `selectStateOrPrefecture(value?)` + `selectPhonePrefix(prefix)` +
@@ -558,15 +573,15 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 16 (backlog priorisé)
+## 10. Actions Sprint 17 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **Réduire `PickupDialogHandler.ts` sous 400 L** (optionnel) —
-   Sprint 15 a ramené le handler à 406 L via `PickupStateSelector`
-   (cumul Sprint 5+6+15 = −44 %). L'extraction restante potentielle est
-   `fillByLabelInDialog` (~75 L, 2 stratégies retries). Non prioritaire
-   car le seuil ~500 L est largement respecté.
+1. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) —
+   Sprint 7 a ramené à 751 L (actuel 771 L). Reste extractible :
+   `SelectClickAndCollectHelper` (~160 L, ouverture panel Pickup avec 3
+   fallbacks) et éventuellement `ShippingMethodSelector` (~70 L). Non
+   prioritaire car déjà sous le seuil 800.
 2. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
    a ramené à 751 L. Reste extractible : `SelectClickAndCollectHelper`
    (~160 L couvrant l'ouverture du panel pickup avec ses 3 fallbacks) et

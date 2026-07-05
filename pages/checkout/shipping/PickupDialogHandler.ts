@@ -6,6 +6,7 @@ import { CivilitySelector } from './CivilitySelector';
 import { PickupCivilityStrategy } from './PickupCivilityStrategy';
 import { PickupRefillGuard } from './PickupRefillGuard';
 import { PickupStateSelector, pickupStateLabelFor } from './PickupStateSelector';
+import { PickupDialogFieldFiller } from './PickupDialogFieldFiller';
 
 /**
  * Sprint 15 — `pickupStateLabelFor` is re-exported here for backwards
@@ -68,6 +69,7 @@ export class PickupDialogHandler {
   private readonly pickupCivilityStrategy: PickupCivilityStrategy;
   private readonly pickupRefillGuard: PickupRefillGuard;
   private readonly pickupStateSelector: PickupStateSelector;
+  private readonly pickupDialogFieldFiller: PickupDialogFieldFiller;
 
   constructor(
     private readonly page: Page,
@@ -86,6 +88,10 @@ export class PickupDialogHandler {
     // PickupStateSelector. Only needs `page` (for the outer `evaluate`
     // that scans page-wide selects). Behavior preserved 1:1.
     this.pickupStateSelector = new PickupStateSelector(page);
+    // Sprint 16 — label-based field filling extracted to
+    // PickupDialogFieldFiller. Only needs `page` (for the 50 ms
+    // post-fill waitForTimeout marker). Behavior preserved 1:1.
+    this.pickupDialogFieldFiller = new PickupDialogFieldFiller(page);
   }
 
   /**
@@ -169,79 +175,19 @@ export class PickupDialogHandler {
     return this.pickupStateSelector.select(state, dialog);
   }
 
+  /**
+   * Sprint 16: full body extracted to `PickupDialogFieldFiller`. The
+   * private signature is preserved as a delegate so `fillTextFields`
+   * (below) keeps calling `this.fillByLabelInDialog(...)` at the same
+   * spot with the same arguments — no callsite refactor needed.
+   */
   private async fillByLabelInDialog(
     dialog: Locator,
     name: RegExp,
     value: string,
     label: string
   ): Promise<boolean> {
-    // IMPORTANT: scope to the dialog!
-    let tb: Locator | null = null;
-
-    // Strategy 1: accessible name via role (preferred)
-    const byRole = dialog.getByRole('textbox', { name });
-    const roleCount = await byRole.count().catch(() => 0);
-    for (let i = 0; i < roleCount; i++) {
-      const candidate = byRole.nth(i);
-      if (await candidate.isVisible().catch(() => false)) {
-        tb = candidate;
-        break;
-      }
-    }
-
-    // Strategy 2: common ID/name patterns inside dialog (more reliable for Celine dialogs)
-    if (!tb) {
-      const commonSelectors = [
-        'input[id*="firstName" i]:not([id*="Alternate"])',
-        'input[name*="firstName" i]:not([name*="Alternate"])',
-        'input[id*="lastName" i]:not([id*="Alternate"])',
-        'input[name*="lastName" i]:not([name*="Alternate"])',
-        'input[id*="addressOne" i], input[id*="address1" i]',
-        'input[name*="addressOne" i], input[name*="address1" i]',
-        'input[id*="city" i], input[name*="city" i]',
-        'input[id*="postal" i], input[id*="zip" i]',
-        'input[id*="phone" i], input[name*="phone" i]',
-      ];
-      for (const sel of commonSelectors) {
-        const candidate = dialog.locator(sel).first();
-        if (await candidate.isVisible({ timeout: 200 }).catch(() => false)) {
-          // Only use if the label name regex roughly matches or for specific labels
-          const idOrName =
-            (await candidate.getAttribute('id')) || (await candidate.getAttribute('name')) || '';
-          if (
-            name.test(idOrName) ||
-            label.toLowerCase().includes('first') ||
-            label.toLowerCase().includes('last') ||
-            label.toLowerCase().includes('city') ||
-            label.toLowerCase().includes('address')
-          ) {
-            tb = candidate;
-            break;
-          }
-        }
-      }
-    }
-
-    if (!tb) {
-      scopedLogger.warn(`${label} visible field not found`);
-      return false;
-    }
-    try {
-      await tb.scrollIntoViewIfNeeded().catch(this.swallowOptional(`${label} tb scrollIntoView`));
-      await tb.click({ timeout: TIMEOUTS.short }).catch(this.swallowOptional(`${label} tb focus click`));
-      await tb.fill('').catch(this.swallowOptional(`${label} tb pre-clear`));
-      await tb.pressSequentially(value, { delay: 50 });
-      await tb.blur().catch(this.swallowOptional(`${label} tb post-fill blur`));
-      // Log confirms the field was filled but does NOT echo the value — for
-      // fields like phone/address, the raw value is PII; only the label is safe.
-      scopedLogger.success(`${label} filled`);
-      // TODO Sprint 5: replace with stable pickup signal.
-      await this.page.waitForTimeout(50);
-      return true;
-    } catch (err) {
-      scopedLogger.warn(`${label} fill failed: ${errorName(err)}`);
-      return false;
-    }
+    return this.pickupDialogFieldFiller.fillByLabel(dialog, name, value, label);
   }
 
   private async fillTextFields(options: PickupDialogOptions, dialog: Locator): Promise<void> {
