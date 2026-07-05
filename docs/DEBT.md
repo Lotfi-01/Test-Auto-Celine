@@ -337,15 +337,19 @@ replace with stable shipping signal.` dans le code** :
   `continueToShipping` — waitFor attached + scroll evaluate + isEnabled
   - waitForFunction gate + safeClick → JS click fallback + belt-and-
     suspenders `form.requestSubmit()` evaluate + `Promise.race`
-    waitForURL/continueToPayment) → **494 → 444 lignes (−50, −10 %)**.
-    **Cumul Sprint 3+4+7+17+18+19+21 : ~1440 → 444 (−996, −69 %).**
-    L'API publique (`fillShippingAddress`, `selectStateOrPrefecture`,
-    `selectPhonePrefix`, `selectClickAndCollect`, `selectFirstShippingMethod`,
-    `enterPostalCode`, `continueToShipping`) reste sur la façade et délègue
-    aux helpers. La taille restante vient : (a) de `continueToPayment`
-    avec son evaluate() de visible payment markers (~65 L), (b) de
-    `clickSubmitShipping` (~45 L), (c) `swallowOptional` + `errorName` +
-    `logStep` + orchestration.
+    waitForURL/continueToPayment) → 494 → 444 lignes (−50, −10 %).
+    Sprint 22 : `ContinueToPaymentHandler` extrait (bloc
+    `continueToPayment` — `closeAllSidePanels` avec `force: true` +
+    exclude shippingBillingForms + pre-check `waitForURL` + 3
+    stratégies détection payment : URL match / clic button + waitForURL /
+    visible DOM markers Adyen/Cybersource evaluate) → **444 → 398 lignes
+    (−46, −10 %)**. **Cumul Sprint 3+4+7+17+18+19+21+22 : ~1440 → 398
+    (−1042, −72 %).** L'API publique (`fillShippingAddress`,
+    `selectStateOrPrefecture`, `selectPhonePrefix`, `selectClickAndCollect`,
+    `selectFirstShippingMethod`, `enterPostalCode`, `continueToShipping`,
+    `continueToPayment`) reste sur la façade et délègue aux helpers.
+    La taille restante vient : (a) de `clickSubmitShipping` (~45 L),
+    (b) `swallowOptional` + `errorName` + `logStep` + orchestration.
 - `pages/checkout/shipping/PickupDialogHandler.ts` — Sprint 4 : nouveau
   helper 720 lignes. Sprint 5 : `PickupCivilityStrategy` extrait → 720 →
   614 lignes (−106). Sprint 6 : `PickupRefillGuard` extrait
@@ -471,6 +475,32 @@ replace with stable shipping signal.` dans le code** :
     5 primitives (3 `evaluate` + 1 `waitForFunction` + 2 `requestSubmit`
     code refs déplacés 1:1 — 0 `force: true`, 0 `waitForTimeout` dans le
     bloc).
+- `pages/checkout/shipping/ContinueToPaymentHandler.ts` — **nouveau
+  (Sprint 22)** : 166 lignes. Contient uniquement la classe
+  `ContinueToPaymentHandler` avec `continue(): Promise<boolean>` public.
+  Corps déplacé 1:1 : `waitForLoadState('domcontentloaded')` +
+  `closeAllSidePanels` avec `force: true` + exclude
+  shippingBillingForms + pre-check `waitForURL(/payment|paiement/)` +
+  3 stratégies de détection (URL match → visible continue button + clic
+  - post-click waitForURL → visible DOM markers Adyen/Cybersource via
+    `page.evaluate`) + throw quand aucune stratégie ne détecte payment.
+    Constructor `(deps: ContinueToPaymentDeps)` : `page` +
+    `continueToPaymentButton` + 2 callbacks `safeClick` et `isVisible`
+    bindés sur BasePage (pattern Sprint 18/19/21 étendu — pas de
+    duplication). Aucun import `CheckoutShippingPage` (pas de cycle).
+    Imports type-only via `import type` pour `Page`, `Locator`,
+    `SafeClickOptions`. `closeAllSidePanels` importé depuis
+    `utils/selectorStrategy` et `redactUrl` importé depuis
+    `pages/checkout/payment/urlRedaction`. Logger
+    `TestLogger.scoped('ContinueToPayment')`. Primitives locales
+    `swallowOptional` + `errorName` PII-safe. **Sécurité Sprint 22** :
+    le throw outer `` `Failed to reach payment step — still at ${finalUrl}` ``
+    (URL complète = query params potentiellement session
+    tokens/order/cart IDs) est converti en `` `${redactUrl(finalUrl)}` ``
+    (origin + pathname uniquement). Throw semantique préservée (même
+    Error, même failure mode). Delta net 0 sur les 4 primitives (1
+    `force: true` inside `closeAllSidePanels` options + 1 `evaluate`
+    déplacés 1:1 — 0 `waitForTimeout`, 0 `waitForFunction` dans le bloc).
 - `pages/checkout/shipping/AddressFormFiller.ts` — **nouveau (Sprint 7)** :
   437 lignes. Contient `fillShippingAddress(options)` +
   `selectStateOrPrefecture(value?)` + `selectPhonePrefix(prefix)` +
@@ -656,15 +686,14 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 22 (backlog priorisé)
+## 10. Actions Sprint 23 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **Réduire `CheckoutShippingPage.ts` sous 400 L** (optionnel) — Sprint 21
-   a ramené à 444 L. Reste extractible : `continueToPayment` (~65 L,
-   evaluate visible payment markers), `clickSubmitShipping` (~45 L).
-   Extractions individuelles possibles mais non urgentes — la façade
-   est désormais à −69 % du max historique (~1440 L).
+1. **Réduire `CheckoutShippingPage.ts` sous 350 L** (optionnel) — Sprint 22
+   a ramené à 398 L. Reste extractible : `clickSubmitShipping` (~45 L).
+   Extraction possible mais non urgente — la façade est désormais à
+   −72 % du max historique (~1440 L).
 2. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
 3. **Split du mégatest** — découper `celine-purchase.spec.ts` en
