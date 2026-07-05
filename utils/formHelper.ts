@@ -41,6 +41,16 @@ import { TestLogger } from './logger';
 const logger = TestLogger.scoped('FormHelper');
 
 /**
+ * Sprint 9 — PII-safe error tag for optional-step logs.
+ * Never returns `.message` — a Playwright error message can embed selectors
+ * and field IDs. `error.name` (`TimeoutError`, `Error`) is enough for
+ * triage and carries no value.
+ */
+function errorName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : 'UnknownError';
+}
+
+/**
  * Options for filling a form field
  */
 export interface FillFieldOptions {
@@ -98,12 +108,22 @@ export async function fillField(
 
     // Scroll into view
     if (scroll) {
-      await locator.scrollIntoViewIfNeeded().catch(() => {});
+      // Sprint 9: convert silent catch to PII-safe debug log — the fill
+      // below is the invariant, this scroll is optional. Fail-open 1:1.
+      await locator.scrollIntoViewIfNeeded().catch((error) => {
+        logger.debug(`Optional form helper step failed: scroll into view (${errorName(error)})`);
+      });
     }
 
     // Clear existing value
     if (clear) {
-      await locator.clear().catch(() => {});
+      // Sprint 9: convert silent catch to PII-safe debug log — some inputs
+      // wrap in readonly containers where clear() rejects but fill() still
+      // works. The verification via `inputValue` below catches a real
+      // mismatch. Fail-open 1:1.
+      await locator.clear().catch((error) => {
+        logger.debug(`Optional form helper step failed: clear (${errorName(error)})`);
+      });
     }
 
     // Fill the value
