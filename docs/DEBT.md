@@ -74,6 +74,18 @@ Le catch de `fillField` — précédemment `error.message` — est converti en
 `errorName(err)` pour respecter la règle PII sur les nouveaux logs. Le
 baseline reste à 32.
 
+Sprint 8 a **liquidé les 23 occurrences de `CheckoutPaymentPage.ts`** via
+un helper d'instance `swallowOptional(label)` (même pattern que Sprint 3
+dans `CheckoutShippingPage.ts`, adapté à la PII policy Payment stricte —
+label statique uniquement, `errorName(err)` uniquement, jamais
+`.message` / `String(error)` / `JSON.stringify(error)`). Aucun flow PSP
+touché : chaque `.catch(() => {})` est remplacé par
+`.catch(this.swallowOptional('<label technique statique>'))`. Les 23
+étapes concernées sont toutes low-risk (scrollIntoView, DOM settle,
+fallback click, event dispatch, Cybersource optional fills, terms
+fallbacks, PayPal / Afterpay landing races). Le baseline passe de
+**32 → 9** (−23, −72 %).
+
 **Évolution du baseline** :
 
 | Sprint | Total | Fichiers concernés | Δ               |
@@ -85,40 +97,36 @@ baseline reste à 32.
 | 5      |    32 |                  3 | 0 (extract 1:1) |
 | 6      |    32 |                  3 | 0 (extract 1:1) |
 | 7      |    32 |                  3 | 0 (extract 1:1) |
+| 8      |     9 |                  2 | **−23**         |
 
-**État du baseline après Sprint 7** (source de vérité —
-`scripts/silent-catch.baseline.json`, figé le **2026-07-04**) :
+**État du baseline après Sprint 8** (source de vérité —
+`scripts/silent-catch.baseline.json`, régénéré le **2026-07-05**) :
 
-| Fichier                                             | Sprint 1 | Sprint 2 | Sprint 3 | Sprint 4 | Sprint 5 | Sprint 6 | Sprint 7 |
-| --------------------------------------------------- | -------: | -------: | -------: | -------: | -------: | -------: | -------: |
-| `pages/checkout/CheckoutShippingPage.ts`            |       28 |       28 |    **0** |        0 |        0 |        0 |        0 |
-| `pages/checkout/shipping/AddressFormFiller.ts`      |      N/A |      N/A |      N/A |      N/A |      N/A |      N/A |    **0** |
-| `pages/checkout/shipping/PickupDialogHandler.ts`    |      N/A |      N/A |      N/A |    **0** |        0 |        0 |        0 |
-| `pages/checkout/shipping/PickupCivilityStrategy.ts` |      N/A |      N/A |      N/A |      N/A |    **0** |        0 |        0 |
-| `pages/checkout/shipping/PickupRefillGuard.ts`      |      N/A |      N/A |      N/A |      N/A |      N/A |    **0** |        0 |
-| `pages/checkout/shipping/CivilitySelector.ts`       |      N/A |      N/A |    **0** |        0 |        0 |        0 |        0 |
-| `pages/checkout/CheckoutPaymentPage.ts`             |       23 |       23 |       23 |       23 |       23 |       23 |       23 |
-| `tests/celine-purchase.spec.ts`                     |        7 |        7 |        7 |        7 |        7 |        7 |        7 |
-| `utils/formHelper.ts`                               |        2 |        2 |        2 |        2 |        2 |        2 |        2 |
-| `pages/CelineProductPage.ts`                        |        7 |        0 |        0 |        0 |        0 |        0 |        0 |
-| `utils/selectorStrategy.ts`                         |        6 |        0 |        0 |        0 |        0 |        0 |        0 |
-| `pages/BasePage.ts`                                 |        5 |        0 |        0 |        0 |        0 |        0 |        0 |
-| `pages/checkout/CheckoutLoginPage.ts`               |        4 |        0 |        0 |        0 |        0 |        0 |        0 |
-| **Total**                                           |   **82** |   **60** |   **32** |   **32** |   **32** |   **32** |   **32** |
+| Fichier                                             | Sprint 1 | Sprint 2 | Sprint 3 | Sprint 4 | Sprint 5 | Sprint 6 | Sprint 7 | Sprint 8 |
+| --------------------------------------------------- | -------: | -------: | -------: | -------: | -------: | -------: | -------: | -------: |
+| `pages/checkout/CheckoutShippingPage.ts`            |       28 |       28 |    **0** |        0 |        0 |        0 |        0 |        0 |
+| `pages/checkout/shipping/AddressFormFiller.ts`      |      N/A |      N/A |      N/A |      N/A |      N/A |      N/A |    **0** |        0 |
+| `pages/checkout/shipping/PickupDialogHandler.ts`    |      N/A |      N/A |      N/A |    **0** |        0 |        0 |        0 |        0 |
+| `pages/checkout/shipping/PickupCivilityStrategy.ts` |      N/A |      N/A |      N/A |      N/A |    **0** |        0 |        0 |        0 |
+| `pages/checkout/shipping/PickupRefillGuard.ts`      |      N/A |      N/A |      N/A |      N/A |      N/A |    **0** |        0 |        0 |
+| `pages/checkout/shipping/CivilitySelector.ts`       |      N/A |      N/A |    **0** |        0 |        0 |        0 |        0 |        0 |
+| `pages/checkout/CheckoutPaymentPage.ts`             |       23 |       23 |       23 |       23 |       23 |       23 |       23 |    **0** |
+| `tests/celine-purchase.spec.ts`                     |        7 |        7 |        7 |        7 |        7 |        7 |        7 |        7 |
+| `utils/formHelper.ts`                               |        2 |        2 |        2 |        2 |        2 |        2 |        2 |        2 |
+| `pages/CelineProductPage.ts`                        |        7 |        0 |        0 |        0 |        0 |        0 |        0 |        0 |
+| `utils/selectorStrategy.ts`                         |        6 |        0 |        0 |        0 |        0 |        0 |        0 |        0 |
+| `pages/BasePage.ts`                                 |        5 |        0 |        0 |        0 |        0 |        0 |        0 |        0 |
+| `pages/checkout/CheckoutLoginPage.ts`               |        4 |        0 |        0 |        0 |        0 |        0 |        0 |        0 |
+| **Total**                                           |   **82** |   **60** |   **32** |   **32** |   **32** |   **32** |   **32** |    **9** |
 
-Les 32 occurrences restantes sont concentrées à 72 % dans
-`CheckoutPaymentPage.ts` — hors périmètre Sprint 5 par consigne (flows PSP
-PayPal, Afterpay, Adyen, Cybersource, 3DS). À traiter Sprint 6 après
-extraction préalable des helpers PayPal/Afterpay/3DS.
+Les 9 occurrences restantes sont réparties entre :
 
-Les 7 occurrences restantes dans `tests/celine-purchase.spec.ts` sont des
-`.catch(() => {})` autour d'actions de fallback UI (zip OK button, force
-click shipping label). Elles seront traitées Sprint 6 en même temps que le
-découpage du mégatest.
-
-Les 2 dans `utils/formHelper.ts` sont sur des étapes optionnelles
-(`scrollIntoView`, `clear`) au sein de wrappers `Result<T>` — traitables
-sans risque en Sprint 6 avec la même approche `logger.debug`.
+- `tests/celine-purchase.spec.ts` (7) — `.catch(() => {})` autour d'actions de
+  fallback UI (zip OK button, force click shipping label). Traitement Sprint 9
+  au fil du split du mégatest.
+- `utils/formHelper.ts` (2) — étapes optionnelles (`scrollIntoView`, `clear`)
+  au sein de wrappers `Result<T>`. Traitement Sprint 9 avec la même approche
+  `logger.debug`.
 
 Fichiers qui n'apparaissent PAS dans le baseline (0 silent catch strict) mais
 qui restent dans l'override ESLint parce qu'ils contiennent d'autres patterns
@@ -405,30 +413,36 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 8 (backlog priorisé)
+## 10. Actions Sprint 9 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **`CheckoutPaymentPage.ts` refactor** — extraire helpers PayPal,
-   Afterpay, Adyen, 3DS. Après extraction : liquider les 23 silent catches
-   restants avec `swallowOptional` (même pattern que Sprint 2/3/4). Devient
-   l'action #1 après extraction de `AddressFormFiller` en Sprint 7.
-2. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
+1. **7 silent catches spec + 2 formHelper (target baseline < 5)** —
+   Sprint 8 a ramené le baseline de 32 à 9. Le reste (`utils/formHelper.ts=2`,
+   `tests/celine-purchase.spec.ts=7`) est concentré sur des étapes optionnelles
+   UI (zip OK button, force click shipping label) et sur des wrappers
+   `Result<T>` (`scrollIntoView`, `clear`) — traitement `logger.debug`
+   direct, sans risque PII majeur, peut se faire au fil du split du mégatest.
+2. **`CheckoutPaymentPage.ts` refactor structurel** (optionnel) — Sprint 8
+   a liquidé les silent catches sans toucher les flows PSP. Une extraction
+   ultérieure de helpers PayPal / Afterpay / Adyen / 3DS reste possible
+   pour ramener le fichier sous ~600 L (actuellement ~880 L après ajout
+   du helper). Non prioritaire car les 23 catches sont désormais
+   liquidés.
+3. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
    à 485 lignes, sous le seuil. L'extraction de `selectStateInDialog`
    (~65 L, `page.evaluate` de state search) reste possible si l'on
    souhaite gagner ~13 % supplémentaires, mais n'est plus prioritaire.
-3. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
+4. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
    a ramené à 751 L. Reste extractible : `SelectClickAndCollectHelper`
    (~160 L couvrant l'ouverture du panel pickup avec ses 3 fallbacks) et
    éventuellement `ShippingMethodSelector` (~70 L). Non prioritaire car
    déjà sous le seuil 800.
-4. **`storageState` par région** — global-setup persistant pour supprimer
+5. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
-5. **Split du mégatest** — découper `celine-purchase.spec.ts` en
+6. **Split du mégatest** — découper `celine-purchase.spec.ts` en
    `product.spec.ts`, `checkout-login.spec.ts`, `checkout-shipping.spec.ts`,
    `checkout-payment.spec.ts`, `checkout-confirmation.spec.ts`.
-6. **7 silent catches spec + 2 formHelper** — traiter au fil du split
-   ci-dessus (target : baseline total < 10).
 7. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
    remplacer par des signaux réels maintenant que le scope pickup est
    entièrement scindé en trois helpers ciblés (handler, civility, refill
