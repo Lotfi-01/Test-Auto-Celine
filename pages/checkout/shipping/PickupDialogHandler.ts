@@ -5,6 +5,15 @@ import { TestLogger } from '../../../utils/logger';
 import { CivilitySelector } from './CivilitySelector';
 import { PickupCivilityStrategy } from './PickupCivilityStrategy';
 import { PickupRefillGuard } from './PickupRefillGuard';
+import { PickupStateSelector, pickupStateLabelFor } from './PickupStateSelector';
+
+/**
+ * Sprint 15 — `pickupStateLabelFor` is re-exported here for backwards
+ * compatibility with the existing unit-test import
+ * (`tests/unit/PickupDialogHandler.spec.ts`). The function itself lives
+ * in `./PickupStateSelector.ts` — do NOT define it locally.
+ */
+export { pickupStateLabelFor };
 
 /**
  * Sprint 4 — extracted from `CheckoutShippingPage` (fillPickupAddressForm
@@ -40,43 +49,6 @@ export interface PickupDialogOptions {
   phone: string;
 }
 
-const STATE_LABEL_MAP: Record<string, string> = {
-  NSW: 'NEW SOUTH WALES',
-  VIC: 'VICTORIA',
-  QLD: 'QUEENSLAND',
-  WA: 'WESTERN AUSTRALIA',
-  SA: 'SOUTH AUSTRALIA',
-  TAS: 'TASMANIA',
-  NT: 'NORTHERN TERRITORY',
-  ACT: 'AUSTRALIAN CAPITAL TERRITORY',
-  NY: 'NEW YORK',
-  CA: 'CALIFORNIA',
-  TX: 'TEXAS',
-  FL: 'FLORIDA',
-  IL: 'ILLINOIS',
-  NJ: 'NEW JERSEY',
-  MA: 'MASSACHUSETTS',
-  WA_US: 'WASHINGTON',
-};
-
-/**
- * PURE — maps a state code (AU or US) to the full name used in the Celine
- * pickup dialog `<option>` labels. Preserved 1:1 from the previous inline
- * `labelMap` in `CheckoutShippingPage.selectStateInDialog`:
- *
- *   const fullName = labelMap[state.toUpperCase()] || state;
- *
- * Behavior contract (unchanged):
- *  - Case-insensitive lookup: `nsw` → `NEW SOUTH WALES`.
- *  - Unknown codes are returned unchanged so the caller can attempt the
- *    raw input against the DOM as a last resort.
- *  - Empty string / falsy inputs pass through via `|| state` — matches the
- *    previous coercion exactly (`''` is falsy, so the fallback returns `''`).
- */
-export function pickupStateLabelFor(state: string): string {
-  return STATE_LABEL_MAP[state.toUpperCase()] || state;
-}
-
 const scopedLogger = TestLogger.scoped('PickupDialog');
 
 /**
@@ -95,6 +67,7 @@ function errorName(err: unknown): string {
 export class PickupDialogHandler {
   private readonly pickupCivilityStrategy: PickupCivilityStrategy;
   private readonly pickupRefillGuard: PickupRefillGuard;
+  private readonly pickupStateSelector: PickupStateSelector;
 
   constructor(
     private readonly page: Page,
@@ -109,6 +82,10 @@ export class PickupDialogHandler {
     // PickupRefillGuard. Only needs the shared `page` — no dependency on
     // the handler.
     this.pickupRefillGuard = new PickupRefillGuard(page);
+    // Sprint 15 — state / province / prefecture selection extracted to
+    // PickupStateSelector. Only needs `page` (for the outer `evaluate`
+    // that scans page-wide selects). Behavior preserved 1:1.
+    this.pickupStateSelector = new PickupStateSelector(page);
   }
 
   /**
@@ -182,70 +159,14 @@ export class PickupDialogHandler {
     }
   }
 
+  /**
+   * Sprint 15: full body extracted to `PickupStateSelector`. The private
+   * signature is preserved as a delegate so `fillDialog` (below) keeps
+   * calling `this.selectStateInDialog(...)` at the same spot with the
+   * same arguments — no callsite refactor needed.
+   */
   private async selectStateInDialog(state: string, dialog: Locator): Promise<void> {
-    const fullName = pickupStateLabelFor(state);
-
-    const stateInfo = await this.page
-      .evaluate(
-        ({ fullStateName, abbr }: { fullStateName: string; abbr: string }) => {
-          const selects = Array.from(document.querySelectorAll('select')) as HTMLSelectElement[];
-          const matches = selects.filter((s) =>
-            Array.from(s.options).some((o) => {
-              const text = (o.textContent || '').trim().toUpperCase();
-              const val = (o.value || '').trim().toUpperCase();
-              return text === fullStateName.toUpperCase() || val === abbr.toUpperCase();
-            })
-          );
-          const visible = matches.find((s) => {
-            const cs = window.getComputedStyle(s);
-            return cs.display !== 'none' && cs.visibility !== 'hidden' && s.offsetParent !== null;
-          });
-          const found = visible || matches[0];
-          if (!found) return null;
-          return { id: found.id, name: found.name };
-        },
-        { fullStateName: fullName, abbr: state }
-      )
-      .catch(() => null);
-
-    if (stateInfo && (stateInfo.id || stateInfo.name)) {
-      const sel = stateInfo.id
-        ? `select[id="${stateInfo.id.replace(/"/g, '\\"')}"]`
-        : `select[name="${stateInfo.name.replace(/"/g, '\\"')}"]`;
-      // Prefer the select inside the dialog if present
-      let stateSelect = dialog.locator(sel).first();
-      if (!(await stateSelect.isVisible({ timeout: 300 }).catch(() => false))) {
-        stateSelect = this.page.locator(sel).first();
-      }
-      let selected = false;
-      for (const candidate of [fullName, state, state.toUpperCase()]) {
-        try {
-          await stateSelect.selectOption({ label: candidate });
-          selected = true;
-          break;
-        } catch {
-          try {
-            await stateSelect.selectOption(candidate);
-            selected = true;
-            break;
-          } catch {
-            /* try next candidate */
-          }
-        }
-      }
-      await stateSelect
-        .evaluate((el) => (el as HTMLSelectElement).dispatchEvent(new Event('blur', { bubbles: true })))
-        .catch(this.swallowOptional('state select post-select blur dispatch'));
-      if (selected) {
-        scopedLogger.success(`State selected first: ${state}`);
-        // TODO Sprint 5: replace with stable pickup signal.
-        await this.page.waitForTimeout(150);
-      } else {
-        scopedLogger.warn(`Could not select state: ${state}`);
-      }
-    } else {
-      scopedLogger.warn('State select not found page-wide');
-    }
+    return this.pickupStateSelector.select(state, dialog);
   }
 
   private async fillByLabelInDialog(
