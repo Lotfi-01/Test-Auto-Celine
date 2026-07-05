@@ -6,6 +6,7 @@ import { TIMEOUTS } from '../../config/testConfig';
 import { CivilitySelector } from './shipping/CivilitySelector';
 import { PickupDialogHandler, PickupDialogOptions } from './shipping/PickupDialogHandler';
 import { AddressFormFiller, ShippingAddressOptions } from './shipping/AddressFormFiller';
+import { SelectClickAndCollectHelper } from './shipping/SelectClickAndCollectHelper';
 
 /**
  * Re-export the address-options interface from its Sprint-7 home so any
@@ -44,6 +45,7 @@ export class CheckoutShippingPage extends BasePage {
   private readonly civilitySelector: CivilitySelector;
   private readonly pickupDialogHandler: PickupDialogHandler;
   private readonly addressFormFiller: AddressFormFiller;
+  private readonly selectClickAndCollectHelper: SelectClickAndCollectHelper;
 
   constructor(page: Page) {
     super(page, 'Shipping');
@@ -88,6 +90,12 @@ export class CheckoutShippingPage extends BasePage {
       prefectureSelect: this.prefectureSelect,
       phonePrefixSelect: this.phonePrefixSelect,
     });
+
+    // Sprint 17 — Click & Collect opening flow extracted to
+    // SelectClickAndCollectHelper. Only needs `page` (for the tab
+    // fallbacks, JS evaluate calls, and the store-selection dance).
+    // Behavior preserved 1:1.
+    this.selectClickAndCollectHelper = new SelectClickAndCollectHelper(page);
   }
 
   /**
@@ -359,165 +367,9 @@ export class CheckoutShippingPage extends BasePage {
    * Replaces enterPostalCode + selectFirstShippingMethod when deliveryMode === 'pickup'.
    */
   async selectClickAndCollect(): Promise<boolean> {
-    this.logStep('📝 Selecting PICK-UP IN STORE (Click & Collect)');
-
-    // 1) Click the PICK-UP IN STORE tab — :visible filters out hidden duplicates that
-    //    may exist in cart sidebar or other includes (FR/US/JP/AU all share this pattern).
-    // More robust locator for PICK-UP tab (NL sandbox can render slightly differently)
-    const pickupTab = this.page.locator(
-      'button[aria-controls*="pick_up"][role="tab"]:visible, ' +
-      'button[aria-controls*="pick_up"]:visible, ' +
-      'button:has-text("PICK-UP"):visible, ' +
-      'button:has-text("Click & Collect"):visible, ' +
-      '[role="tab"]:has-text("PICK"):visible'
-    ).first();
-    try {
-      await pickupTab.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-      await pickupTab.scrollIntoViewIfNeeded().catch(this.swallowOptional('pickup tab scrollIntoView'));
-      // Move mouse to the button and click via the page.mouse API (most "trusted" interaction)
-      const box = await pickupTab.boundingBox();
-      if (box) {
-        await this.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-        // TODO Sprint 5: replace with stable shipping signal.
-        await this.page.waitForTimeout(50);
-        await pickupTab.click({ timeout: TIMEOUTS.medium });
-      } else {
-        await pickupTab.click({ timeout: TIMEOUTS.medium });
-      }
-      this.logSuccess('PICK-UP IN STORE tab clicked');
-    } catch (err) {
-      // Fallback for cases where tab is not visible (e.g. already selected, registered saved, or UI variation)
-      this.log('PICK-UP tab not visible, checking if pickup form is already open...', 'warn');
-      const pickupPanel = this.page.locator('section[data-osidepanel-name*="click"], [id*="pickup"], form:has(input[name*="firstNamePickup"])').first();
-      if (await pickupPanel.isVisible({ timeout: 3000 }).catch(() => false)) {
-        this.logSuccess('Pickup form/panel already visible, proceeding without tab click');
-      } else {
-        // Last resort: try to find and click any pickup related button or label to open the form
-        this.log('Trying last resort click for pickup option...', 'warn');
-        const anyPickup = this.page.locator('button:has-text("PICK"), button:has-text("Click & Collect"), label:has-text("PICK-UP"), [data-delivery*="pickup"]').first();
-        if (await anyPickup.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await anyPickup.click({ force: true }).catch(this.swallowOptional('pickup fallback force click'));
-          // TODO Sprint 5: replace with stable shipping signal.
-          await this.page.waitForTimeout(500);
-          this.logSuccess('Clicked alternative pickup element');
-        } else {
-          // Ultimate fallback: use JS to find and click any element with pickup text
-          this.log('Ultimate JS fallback for pickup...', 'warn');
-          await this.page.evaluate(() => {
-            const els = Array.from(document.querySelectorAll('button, label, a, div[role="tab"]'));
-            const match = els.find(el => /pick.?up|click.?&.?collect/i.test(el.textContent || ''));
-            if (match) (match as HTMLElement).click();
-          }).catch(this.swallowOptional('pickup ultimate JS fallback click'));
-          // TODO Sprint 5: replace with stable shipping signal.
-          await this.page.waitForTimeout(1000);
-          // Check again
-          if (!(await pickupPanel.isVisible({ timeout: 2000 }).catch(() => false))) {
-            throw new Error(`PICK-UP tab click failed: ${(err as Error).message}`);
-          }
-          this.logSuccess('Pickup opened via JS fallback');
-        }
-      }
-    }
-
-    // Verify the tab actually became selected. If not, fall back to dispatching a click event in JS.
-    const isSelected = async () =>
-      this.page.evaluate(() => {
-        const tab = document.querySelector('button[aria-controls="panel_pick_up"]');
-        return !!tab && tab.getAttribute('aria-selected') === 'true';
-      });
-
-    try {
-      await this.page.waitForFunction(
-        () => document.querySelector('button[aria-controls="panel_pick_up"]')?.getAttribute('aria-selected') === 'true',
-        undefined,
-        { timeout: TIMEOUTS.short }
-      );
-      this.logSuccess('PICK-UP IN STORE tab is now selected');
-    } catch {
-      this.log('Tab still not selected — retrying via direct DOM click + event dispatch', 'warn');
-      await this.page
-        .evaluate(() => {
-          const tab = document.querySelector('button[aria-controls="panel_pick_up"]') as HTMLButtonElement | null;
-          if (!tab) return;
-          tab.click();
-          tab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-        })
-        .catch(this.swallowOptional('pickup tab JS click + dispatch fallback'));
-      // TODO Sprint 5: replace with stable shipping signal.
-      await this.page.waitForTimeout(100);
-      const ok = await isSelected();
-      if (ok) {
-        this.logSuccess('PICK-UP tab selected after JS click fallback');
-      } else {
-        this.log('PICK-UP tab still not selected after fallback', 'warn');
-      }
-    }
-
-    // 2) The pickup panel auto-shows nearby stores (no postcode entry required).
-    //    Wait for the first store label to appear in the list.
-    const firstStoreLabel = this.page.locator('label[for^="r_address"]').first();
-    try {
-      await firstStoreLabel.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation });
-    } catch {
-      throw new Error('PICK-UP store list never appeared');
-    }
-
-    const storeId = await firstStoreLabel.getAttribute('for').catch(() => null);
-    await firstStoreLabel.scrollIntoViewIfNeeded().catch(this.swallowOptional('firstStoreLabel scrollIntoView'));
-
-    // Try Playwright click first (natural trusted event). Failure is expected
-    // on some UIs where the label click is swallowed; the JS fallback below
-    // is the actual invariant.
-    await firstStoreLabel.click({ timeout: TIMEOUTS.short }).catch(this.swallowOptional('firstStoreLabel Playwright click (JS fallback follows)'));
-
-    // Verify the linked radio is now checked; if not, force-click via JS (Celine handler is finicky)
-    const isStoreChecked = async () =>
-      storeId
-        ? this.page.evaluate((id) => {
-            const input = document.getElementById(id) as HTMLInputElement | null;
-            return !!input && input.checked;
-          }, storeId)
-        : Promise.resolve(true);
-
-    if (!(await isStoreChecked())) {
-      this.log('Store radio not checked after Playwright click — using JS click fallback', 'warn');
-      await this.page
-        .evaluate((id) => {
-          if (!id) return;
-          const label = document.querySelector(`label[for="${id}"]`) as HTMLLabelElement | null;
-          const input = document.getElementById(id) as HTMLInputElement | null;
-          if (label) label.click();
-          if (input && !input.checked) {
-            input.checked = true;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            input.click();
-          }
-        }, storeId)
-        .catch(this.swallowOptional('store JS click + dispatch fallback'));
-    }
-
-    if (await isStoreChecked()) {
-      this.logSuccess(`Store selected (${storeId})`);
-    } else {
-      throw new Error(`Store ${storeId} could not be selected (radio never became checked)`);
-    }
-
-    // 5) Wait for the purchaser-info dialog to appear.
-    // Language-agnostic: scope by structural identifiers, not localized heading text.
-    const dialog = this.page
-      .locator('[role="dialog"]:visible')
-      .filter({
-        has: this.page.locator('input[id*="firstName" i], input[name*="firstName" i], input[id="billingPhoneNumber"]'),
-      })
-      .first();
-    try {
-      await dialog.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation });
-    } catch {
-      this.log('Purchaser-info dialog did not open after store selection', 'warn');
-    }
-
-    return true;
+    // Sprint 17: full body extracted to `SelectClickAndCollectHelper`.
+    // Public signature and return contract preserved 1:1.
+    return this.selectClickAndCollectHelper.select();
   }
 
   /**
