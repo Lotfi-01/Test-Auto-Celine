@@ -1,19 +1,18 @@
 // Sprint 1 — ESLint tightened to prevent NEW silent failures.
-// Sprint 10 — historical debt liquidated. The `HISTORICAL_SILENT_CATCH_FILES`
-// override is reduced to the last 2 files that still carry a single
-// tolerated pattern each; everything else runs under the strict rules.
+// Sprint 11 — historical override removed. Every file now runs under the
+// strict silent-catch rules; there is no per-file downgrade left in this
+// config.
 //
 // Policy:
 //  - Silent-catch baseline is 0 (`scripts/silent-catch.baseline.json`) —
 //    the campaign that ran Sprints 2-9 liquidated all 82 historical
-//    occurrences.
-//  - `no-empty` is strict (empty catch blocks are forbidden) except on
-//    the 2 files listed in `HISTORICAL_SILENT_CATCH_FILES` where a single
-//    residual pattern remains (out of scope for Sprint 10, tracked in
-//    `docs/DEBT.md § Actions Sprint 11`).
-//  - A custom `no-restricted-syntax` rule flags NEW silent `.catch(() => {})`
-//    call sites so any PR introducing one is rejected — enforced with
-//    `error` on every file outside the 2-file override.
+//    occurrences. Sprint 11 converted the last two AST-only residuals
+//    (`} catch {}` in `CheckoutShippingPage` and `.catch(() => { /* … */ })`
+//    in `celine-purchase.spec.ts`) and removed the last override.
+//  - `no-empty` is strict tree-wide (empty catch blocks are forbidden).
+//  - A custom `no-restricted-syntax` rule flags NEW silent
+//    `.catch(() => {})` (empty-body arrow) call sites so any PR
+//    introducing one is rejected at `error` level.
 //  - The regex-based baseline in `scripts/check-silent-catch-baseline.js`
 //    is a second line of defense: `npm run lint` fails if ANY file's
 //    count grows beyond its baseline. Baseline is 0 tree-wide.
@@ -25,29 +24,6 @@
 const js = require('@eslint/js');
 const tseslint = require('typescript-eslint');
 const globals = require('globals');
-
-/**
- * Files still carrying a single tolerated pattern each after the
- * Sprint 2-9 silent-catch campaign:
- *
- *   - `pages/checkout/CheckoutShippingPage.ts`  — 1 residual empty catch
- *     block `} catch {}` inside `selectFirstShippingMethod` (fail-open
- *     fallback around `safeClickWithLabelFallback`; out of scope for
- *     Sprint 10, tracked in `docs/DEBT.md § Actions Sprint 11`).
- *   - `tests/celine-purchase.spec.ts` — 1 residual comment-only
- *     `.catch` handler (BlockStatement whose body is one comment) on the
- *     JP/NL shipping-method race (`Promise.race([...]).catch`). The AST
- *     rule fires on comment-only bodies even when the regex baseline
- *     does not; tracked as Sprint 11 debt.
- *
- * These 2 files run the 4 override rules below at their permissive
- * setting. Every OTHER file runs the strict setting. Do NOT extend this
- * list — Sprint 10 shrunk it from 15 files to 2. Removing a file from
- * this list requires proving via `npm run lint` that the file passes
- * strict `no-empty` + `no-restricted-syntax` + `preserve-caught-error` +
- * `no-useless-assignment` rules first.
- */
-const HISTORICAL_SILENT_CATCH_FILES = ['pages/checkout/CheckoutShippingPage.ts', 'tests/celine-purchase.spec.ts'];
 
 /**
  * `no-restricted-syntax` selector matching `.catch(() => {})` or
@@ -126,20 +102,6 @@ module.exports = [
     files: ['tests/**/*.{ts,js}'],
     rules: {
       'no-empty-pattern': 'off',
-    },
-  },
-
-  // Sprint 10 residual override — 2 files retain 1 tolerated pattern each
-  // (see the JSDoc on `HISTORICAL_SILENT_CATCH_FILES` above). Every other
-  // file runs the strict rules. Sprint 11 target: convert these last 2
-  // sites and REMOVE this override entirely.
-  {
-    files: HISTORICAL_SILENT_CATCH_FILES,
-    rules: {
-      'no-restricted-syntax': ['warn', ...SILENT_CATCH_SYNTAX],
-      'no-empty': ['warn', { allowEmptyCatch: true }],
-      'preserve-caught-error': 'off',
-      'no-useless-assignment': 'off',
     },
   },
 ];

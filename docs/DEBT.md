@@ -173,6 +173,32 @@ supprimé après le test.
 Sprint 11 doit convertir les 2 dernières exceptions ci-dessus et **retirer
 complètement** `HISTORICAL_SILENT_CATCH_FILES` du fichier de configuration.
 
+Sprint 11 a **conclu la campagne** :
+
+- `pages/checkout/CheckoutShippingPage.ts` L.539 — le `} catch {}` est
+  converti en `} catch (error) { this.log('Optional shipping method
+fallback skipped: shippingByName strategy (${this.errorName(error)})',
+'debug'); }`. Ajout d'un helper privé `errorName(err)` PII-safe (retourne
+  `error.name` uniquement). Le helper historique `swallowOptional` (qui
+  utilise `.message`/`String()`) reste inchangé — hors périmètre Sprint 11.
+- `tests/celine-purchase.spec.ts` L.347 — le `.catch(() => { /* comment */ })`
+  est converti en `.catch(ignoreOptionalE2EError('shipping method race
+timeout'))` (helper Sprint 9 déjà défini dans le fichier).
+- `eslint.config.js` — suppression complète de la const
+  `HISTORICAL_SILENT_CATCH_FILES` et du bloc override associé. Chaque
+  fichier du repo tourne désormais sous les règles strictes
+  (`no-empty: error`, `no-restricted-syntax: error`,
+  `preserve-caught-error: warn`, `no-useless-assignment: warn`).
+
+Test négatif ESLint Sprint 11 vérifié : ajout d'un `.catch(() => {})` dans
+un fichier temporaire → `npm run lint` échoue (exit=1) avec
+`no-restricted-syntax` error → cleanup et lint repasse. Aucun résidu.
+
+**Fin de campagne silent-catch** : 82 (Sprint 1) → 0 (Sprint 9) → verrouillé
+au niveau ESLint (Sprint 10 réduit à 2 fichiers) → **override supprimé
+totalement** (Sprint 11). Défense en profondeur : ESLint strict (première
+ligne) + baseline JSON (seconde ligne).
+
 > Estimation initiale obsolète : la revue mentionnait
 > `CheckoutShippingPage.ts=74`, `CheckoutPaymentPage.ts=49`, etc. Ces chiffres
 > provenaient d'un `grep .catch\(` **non filtré** (matchait aussi
@@ -451,68 +477,67 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 11 (backlog priorisé)
+## 10. Actions Sprint 12 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **Retirer complètement `HISTORICAL_SILENT_CATCH_FILES`** dans
-   `eslint.config.js` — Sprint 10 a réduit la liste de 15 → 2 fichiers.
-   Reste à traiter les 2 dernières exceptions :
-   - `pages/checkout/CheckoutShippingPage.ts` L.539 : convertir le
-     `} catch {}` en `} catch (err) { this.log(\`selectFirstShippingMethod fallback skipped: \${(err as Error).name}\`, 'debug'); }`(pattern`swallowOptional`).
-   - `tests/celine-purchase.spec.ts` L.342 : convertir le
-     `.catch(() => { /* comment */ })` en
-     `.catch(ignoreOptionalE2EError('shipping method race timeout'))`
-     (helper local déjà présent depuis Sprint 9).
-     Une fois les 2 conversions faites, retirer la liste entièrement
-     et le bloc override associé. Vérification : `npm run lint` doit
-     rester vert sans override.
-2. **`CheckoutPaymentPage.ts` refactor structurel** (optionnel) — Sprint 8
+1. **`CheckoutPaymentPage.ts` refactor structurel** (optionnel) — Sprint 8
    a liquidé les silent catches sans toucher les flows PSP. Une extraction
    ultérieure de helpers PayPal / Afterpay / Adyen / 3DS reste possible
    pour ramener le fichier sous ~600 L (actuellement ~913 L après ajout
    du helper). Non prioritaire car les 23 catches sont désormais liquidés
    et la baseline totale est à 0.
-3. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
+2. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
    à 485 lignes, sous le seuil. L'extraction de `selectStateInDialog`
    (~65 L, `page.evaluate` de state search) reste possible si l'on
    souhaite gagner ~13 % supplémentaires, mais n'est plus prioritaire.
-4. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
+3. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
    a ramené à 751 L. Reste extractible : `SelectClickAndCollectHelper`
    (~160 L couvrant l'ouverture du panel pickup avec ses 3 fallbacks) et
    éventuellement `ShippingMethodSelector` (~70 L). Non prioritaire car
    déjà sous le seuil 800.
-5. **`storageState` par région** — global-setup persistant pour supprimer
+4. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
-6. **Split du mégatest** — découper `celine-purchase.spec.ts` en
+5. **Split du mégatest** — découper `celine-purchase.spec.ts` en
    `product.spec.ts`, `checkout-login.spec.ts`, `checkout-shipping.spec.ts`,
-   `checkout-payment.spec.ts`, `checkout-confirmation.spec.ts`. À faire
-   après conversion du `.catch` L.342 (voir action §1) pour ne pas
-   dupliquer la dette dans les nouveaux specs.
-7. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
+   `checkout-payment.spec.ts`, `checkout-confirmation.spec.ts`.
+6. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
    remplacer par des signaux réels maintenant que le scope pickup est
    entièrement scindé en trois helpers ciblés (handler, civility, refill
    guard) et que le scope adresse est isolé dans `AddressFormFiller`.
    Chaque sleep a désormais un contexte local suffisamment étroit pour
    identifier un signal DOM/URL fiable.
-8. **Flakes `tests/unit/fileLock.spec.ts:114` et
+7. **Flakes `tests/unit/fileLock.spec.ts:114` et
    `tests/unit/testResultTracker.spec.ts:66`** — deux tests
    cross-process (`cross-process contention preserves all writes` et
    `cross-process concurrent record() preserves all entries`) échouent
    occasionnellement (~10-20 %). Race probable dans le `child_process`
    spawn — même famille. À investiguer isolément.
+8. **Warnings ESLint révélés post-Sprint 11** — la suppression de
+   l'override rend visibles quelques warnings préexistants qui étaient
+   masqués : `preserve-caught-error` sur `CheckoutShippingPage.ts:415` et
+   `celine-purchase.spec.ts:202`, `no-useless-assignment` sur
+   `celine-purchase.spec.ts:471` (paymentMethodSelected). Warnings
+   uniquement — lint reste vert. À nettoyer opportunément avec le split
+   du mégatest (§5) et le refactor Payment (§1). Idem : nettoyer
+   l'`unused-disable` sur `scripts/check-silent-catch-baseline.js:2` et
+   les 2 `no-explicit-any` sur `emailReporter.ts:479` + `formHelper.ts:400`.
 9. **Warning tsc pré-existant `_buyNowUsed` dans
    `tests/celine-purchase.spec.ts`** — la variable est assignée mais
    jamais lue post-assignation (héritage historique). L'ESLint
    `varsIgnorePattern: '^_'` la tolère ; `tsc --noEmit` la signale en
    diagnostic informationnel mais ne fail pas. À nettoyer au fil du
-   split du mégatest (Sprint 11 §6).
+   split du mégatest (§5).
 10. **Duplication `safeClick`/`safeFill`/`safeSelect`/`isVisible`** —
     `AddressFormFiller` réimplémente localement les primitives BasePage
     (Sprint 7). À reconsidérer si un pattern de partage émerge côté
     Payment/Login helpers ; sinon, laisser les duplications comme prix
     de l'isolation forte.
-11. **Historique Git** — purger `.claude/settings.local.json` et
+11. **`swallowOptional` historique dans `CheckoutShippingPage.ts`** —
+    encore basé sur `.message` / `String(err)`. Non touché en Sprint 11
+    (hors périmètre — utilisé par ~15 sites). À migrer vers `errorName`
+    au fil du prochain refactor structurel de la façade.
+12. **Historique Git** — purger `.claude/settings.local.json` et
     `%TEMP%install-qwen.bat` (voir §9), après validation humaine.
 
 ---

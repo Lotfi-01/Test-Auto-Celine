@@ -105,6 +105,16 @@ export class CheckoutShippingPage extends BasePage {
   }
 
   /**
+   * Sprint 11 — PII-safe error tag. Never returns `.message` (which can
+   * embed selectors, URLs, or field values on Playwright errors). Used
+   * exclusively by the new inline catch below; the historical
+   * `swallowOptional` above is untouched (out of scope for Sprint 11).
+   */
+  private errorName(err: unknown): string {
+    return err instanceof Error && err.name ? err.name : 'UnknownError';
+  }
+
+  /**
    * Enter postal code to unlock shipping form
    * @param postalCode - Postal/ZIP code
    */
@@ -536,7 +546,17 @@ export class CheckoutShippingPage extends BasePage {
         clicked = await this.safeClickWithLabelFallback(shippingByName, {
           timeout: TIMEOUTS.short,
         });
-      } catch {}
+      } catch (error) {
+        // Sprint 11: replace the historical `} catch {}` empty block. The
+        // fall-through to the later strategies (SHIPPING_METHOD_STRATEGY
+        // + radio + label force-click) is the invariant; this catch is
+        // purely fail-open. Log at `debug` with a static label + `error.name`
+        // (no `.message`, no PII).
+        this.log(
+          `Optional shipping method fallback skipped: shippingByName strategy (${this.errorName(error)})`,
+          'debug'
+        );
+      }
 
       if (!clicked) {
         const shippingInput = await SHIPPING_METHOD_STRATEGY.findFirst(this.page, {
