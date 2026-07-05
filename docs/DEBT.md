@@ -61,6 +61,19 @@ n'était pas comptabilisé par la regex du baseline (elle ne matche que les
 chaînes `.catch(() => {})`, pas les blocs `try/catch`), donc le total
 reste à 32.
 
+Sprint 7 n'a **pas modifié** le total non plus : l'extraction de
+`AddressFormFiller` (blocs `fillShippingAddress` + `fillField` +
+`fillOptionalField` + `ensureFormVisible` + `tryOpenFormToggle` +
+`selectStateOrPrefecture` + `selectPhonePrefix`) déplace le code 1:1.
+Le nouveau helper reste **hors** de l'override historique en :
+(a) réimplémentant localement les primitives `safeFill`/`safeClick`/
+`safeSelect`/`isVisible` de `BasePage` sans catch silencieux (chaque
+catch loggue au moins un label technique et `error.name`), (b) reproduisant
+le pattern `swallowOptional(label)` de Sprint 3 avec `errorName` PII-safe.
+Le catch de `fillField` — précédemment `error.message` — est converti en
+`errorName(err)` pour respecter la règle PII sur les nouveaux logs. Le
+baseline reste à 32.
+
 **Évolution du baseline** :
 
 | Sprint | Total | Fichiers concernés | Δ               |
@@ -71,25 +84,27 @@ reste à 32.
 | 4      |    32 |                  3 | 0 (extract 1:1) |
 | 5      |    32 |                  3 | 0 (extract 1:1) |
 | 6      |    32 |                  3 | 0 (extract 1:1) |
+| 7      |    32 |                  3 | 0 (extract 1:1) |
 
-**État du baseline après Sprint 6** (source de vérité —
+**État du baseline après Sprint 7** (source de vérité —
 `scripts/silent-catch.baseline.json`, figé le **2026-07-04**) :
 
-| Fichier                                             | Sprint 1 | Sprint 2 | Sprint 3 | Sprint 4 | Sprint 5 | Sprint 6 |
-| --------------------------------------------------- | -------: | -------: | -------: | -------: | -------: | -------: |
-| `pages/checkout/CheckoutShippingPage.ts`            |       28 |       28 |    **0** |        0 |        0 |        0 |
-| `pages/checkout/shipping/PickupDialogHandler.ts`    |      N/A |      N/A |      N/A |    **0** |        0 |        0 |
-| `pages/checkout/shipping/PickupCivilityStrategy.ts` |      N/A |      N/A |      N/A |      N/A |    **0** |        0 |
-| `pages/checkout/shipping/PickupRefillGuard.ts`      |      N/A |      N/A |      N/A |      N/A |      N/A |    **0** |
-| `pages/checkout/shipping/CivilitySelector.ts`       |      N/A |      N/A |    **0** |        0 |        0 |        0 |
-| `pages/checkout/CheckoutPaymentPage.ts`             |       23 |       23 |       23 |       23 |       23 |       23 |
-| `tests/celine-purchase.spec.ts`                     |        7 |        7 |        7 |        7 |        7 |        7 |
-| `utils/formHelper.ts`                               |        2 |        2 |        2 |        2 |        2 |        2 |
-| `pages/CelineProductPage.ts`                        |        7 |        0 |        0 |        0 |        0 |        0 |
-| `utils/selectorStrategy.ts`                         |        6 |        0 |        0 |        0 |        0 |        0 |
-| `pages/BasePage.ts`                                 |        5 |        0 |        0 |        0 |        0 |        0 |
-| `pages/checkout/CheckoutLoginPage.ts`               |        4 |        0 |        0 |        0 |        0 |        0 |
-| **Total**                                           |   **82** |   **60** |   **32** |   **32** |   **32** |   **32** |
+| Fichier                                             | Sprint 1 | Sprint 2 | Sprint 3 | Sprint 4 | Sprint 5 | Sprint 6 | Sprint 7 |
+| --------------------------------------------------- | -------: | -------: | -------: | -------: | -------: | -------: | -------: |
+| `pages/checkout/CheckoutShippingPage.ts`            |       28 |       28 |    **0** |        0 |        0 |        0 |        0 |
+| `pages/checkout/shipping/AddressFormFiller.ts`      |      N/A |      N/A |      N/A |      N/A |      N/A |      N/A |    **0** |
+| `pages/checkout/shipping/PickupDialogHandler.ts`    |      N/A |      N/A |      N/A |    **0** |        0 |        0 |        0 |
+| `pages/checkout/shipping/PickupCivilityStrategy.ts` |      N/A |      N/A |      N/A |      N/A |    **0** |        0 |        0 |
+| `pages/checkout/shipping/PickupRefillGuard.ts`      |      N/A |      N/A |      N/A |      N/A |      N/A |    **0** |        0 |
+| `pages/checkout/shipping/CivilitySelector.ts`       |      N/A |      N/A |    **0** |        0 |        0 |        0 |        0 |
+| `pages/checkout/CheckoutPaymentPage.ts`             |       23 |       23 |       23 |       23 |       23 |       23 |       23 |
+| `tests/celine-purchase.spec.ts`                     |        7 |        7 |        7 |        7 |        7 |        7 |        7 |
+| `utils/formHelper.ts`                               |        2 |        2 |        2 |        2 |        2 |        2 |        2 |
+| `pages/CelineProductPage.ts`                        |        7 |        0 |        0 |        0 |        0 |        0 |        0 |
+| `utils/selectorStrategy.ts`                         |        6 |        0 |        0 |        0 |        0 |        0 |        0 |
+| `pages/BasePage.ts`                                 |        5 |        0 |        0 |        0 |        0 |        0 |        0 |
+| `pages/checkout/CheckoutLoginPage.ts`               |        4 |        0 |        0 |        0 |        0 |        0 |        0 |
+| **Total**                                           |   **82** |   **60** |   **32** |   **32** |   **32** |   **32** |   **32** |
 
 Les 32 occurrences restantes sont concentrées à 72 % dans
 `CheckoutPaymentPage.ts` — hors périmètre Sprint 5 par consigne (flows PSP
@@ -146,15 +161,16 @@ sécuritaires par des signaux DOM/URL/response.
 
 **Évolution `waitForTimeout` (calls réels dans pages/tests/utils)** :
 
-| Sprint | Total | Détail                                                                                                                                                                                                         |
-| ------ | ----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1      |    32 | 13 Shipping, 7 Payment, 5 spec, 5 Login, 2 Product                                                                                                                                                             |
-| 2      |    28 | idem sauf : spec −2 (JP/NL loading + form-panel padding), Login −2 (padding autour du Tab blur)                                                                                                                |
-| 3      |    25 | idem sauf : Shipping 13 → 10                                                                                                                                                                                   |
-| 4      |    25 | idem — 10 sleeps Shipping split entre Shipping (4) et PickupDialogHandler (6). Extraction 1:1, aucune suppression.                                                                                             |
-| 5      |    25 | idem — extraction `PickupCivilityStrategy` 1:1, aucun sleep dans le bloc civility (déjà supprimé Sprint 3).                                                                                                    |
-| 6      |    25 | idem — extraction `PickupRefillGuard` 1:1. Le sleep `waitForTimeout(100)` d'`ensureFieldsBeforeSubmit` est déplacé dans le guard, marqueur mis à jour `TODO Sprint 5:` → `TODO Sprint 7:`. Aucune suppression. |
-| Δ      |    −7 |                                                                                                                                                                                                                |
+| Sprint | Total | Détail                                                                                                                                                                                                                         |
+| ------ | ----: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1      |    32 | 13 Shipping, 7 Payment, 5 spec, 5 Login, 2 Product                                                                                                                                                                             |
+| 2      |    28 | idem sauf : spec −2 (JP/NL loading + form-panel padding), Login −2 (padding autour du Tab blur)                                                                                                                                |
+| 3      |    25 | idem sauf : Shipping 13 → 10                                                                                                                                                                                                   |
+| 4      |    25 | idem — 10 sleeps Shipping split entre Shipping (4) et PickupDialogHandler (6). Extraction 1:1, aucune suppression.                                                                                                             |
+| 5      |    25 | idem — extraction `PickupCivilityStrategy` 1:1, aucun sleep dans le bloc civility (déjà supprimé Sprint 3).                                                                                                                    |
+| 6      |    25 | idem — extraction `PickupRefillGuard` 1:1. Le sleep `waitForTimeout(100)` d'`ensureFieldsBeforeSubmit` est déplacé dans le guard, marqueur mis à jour `TODO Sprint 5:` → `TODO Sprint 7:`. Aucune suppression.                 |
+| 7      |    25 | idem — extraction `AddressFormFiller` 1:1. Le bloc adresse standard (`fillShippingAddress` + helpers) ne contenait aucun `waitForTimeout` — la répartition Shipping/PickupRefillGuard reste 4 / 5 / 0 / 1. Aucune suppression. |
+| Δ      |    −7 |                                                                                                                                                                                                                                |
 
 Remplacements Sprint 2 :
 
@@ -230,11 +246,21 @@ replace with stable shipping signal.` dans le code** :
 
 - `pages/checkout/CheckoutShippingPage.ts` — Sprint 3 : `CivilitySelector`
   extrait. Sprint 4 : `PickupDialogHandler` extrait (core Pickup / C&C
-  déplacé 1:1). Le fichier passe de ~1440 → 944 lignes (−34 %). L'API
-  publique (`selectClickAndCollect`, `fillPickupAddressForm`) reste sur
-  la façade et délègue au handler. `AddressFormFiller` reste à extraire
-  en Sprint 7. Sprint 5 et Sprint 6 : fichier non modifié (extractions
-  ciblées dans le handler).
+  déplacé 1:1). Le fichier passe de ~1440 → 944 lignes (−34 %). Sprint 5
+  et Sprint 6 : fichier non modifié (extractions ciblées dans le handler).
+  Sprint 7 : `AddressFormFiller` extrait (blocs `fillShippingAddress` +
+  `fillField` + `fillOptionalField` + `ensureFormVisible` +
+  `tryOpenFormToggle` + `selectStateOrPrefecture` + `selectPhonePrefix`)
+  → **944 → 751 lignes (−193, −20 %)**. **Sous le seuil `~800 lignes`.**
+  L'API publique (`fillShippingAddress`, `selectStateOrPrefecture`,
+  `selectPhonePrefix`) reste sur la façade et délègue au filler. La
+  taille restante vient : (a) de `enterPostalCode` + `clickOkButton`
+  (~90 L), (b) de `continueToShipping` avec ses 2 `evaluate` scroll +
+  requestSubmit (~65 L), (c) de `selectClickAndCollect` avec ses 3
+  fallbacks pickup + JS click (~160 L), (d) de `selectFirstShippingMethod`
+  avec ses fallbacks radio/label (~70 L), (e) de `continueToPayment`
+  avec son evaluate() de visible payment markers (~65 L), (f) de
+  `clickSubmitShipping` (~45 L), (g) `swallowOptional` + orchestration.
 - `pages/checkout/shipping/PickupDialogHandler.ts` — Sprint 4 : nouveau
   helper 720 lignes. Sprint 5 : `PickupCivilityStrategy` extrait → 720 →
   614 lignes (−106). Sprint 6 : `PickupRefillGuard` extrait
@@ -257,7 +283,22 @@ replace with stable shipping signal.` dans le code** :
   cycle). L'outer catch de `ensureFields` est un `debug`-log PII-safe
   (`error.name` uniquement) — conversion 1:1 de l'empty catch originel
   pour rester hors de l'override `HISTORICAL_SILENT_CATCH_FILES`.
-- `pages/checkout/CheckoutPaymentPage.ts` — 851 lignes → extraire les flows PayPal / Afterpay / 3DS (Sprint 7).
+- `pages/checkout/shipping/AddressFormFiller.ts` — **nouveau (Sprint 7)** :
+  437 lignes. Contient `fillShippingAddress(options)` +
+  `selectStateOrPrefecture(value?)` + `selectPhonePrefix(prefix)` +
+  `ensureFormVisible()` publics, et `fillField` / `fillOptionalField` /
+  `tryOpenFormToggle` + primitives locales
+  `safeFill`/`safeClick`/`safeSelect`/`isVisible`/`swallowOptional`
+  privées. Aucun import de `CheckoutShippingPage` (dépendances passées
+  via `AddressFormFillerDeps` — `page` + 4 `Locator`). Type
+  `ShippingAddressOptions` défini ici et re-exporté depuis
+  `CheckoutShippingPage.ts` pour la compat externe. Le catch
+  précédemment `error.message` de `fillField` est converti en
+  `errorName(err)` (PII policy). Aucun `evaluate()` ni `force: true`
+  ajouté au tree (déplacements 1:1). ~440 L incluent la réimplémentation
+  locale des primitives BasePage (~120 L, isolation forte pour éviter
+  couplage) + le bloc JSDoc PII substantiel.
+- `pages/checkout/CheckoutPaymentPage.ts` — 851 lignes → extraire les flows PayPal / Afterpay / 3DS (Sprint 8).
 - `utils/emailReporter.ts` — 630 lignes → séparer template HTML / SMTP transport.
 - `tests/celine-purchase.spec.ts` — 507 lignes → splitter en 4-5 specs ciblés.
 
@@ -364,22 +405,23 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 7 (backlog priorisé)
+## 10. Actions Sprint 8 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **`AddressFormFiller`** — extraire les blocs `fillShippingAddress`,
-   `fillField`, `fillOptionalField`, `ensureFormVisible`, `tryOpenFormToggle`
-   de `CheckoutShippingPage.ts` (~200 lignes). Rapprocherait la façade
-   d'un orchestrateur pur. Devient l'action #1 après réduction du
-   handler sous 500 lignes en Sprint 6.
-2. **`CheckoutPaymentPage.ts` refactor** — extraire helpers PayPal,
+1. **`CheckoutPaymentPage.ts` refactor** — extraire helpers PayPal,
    Afterpay, Adyen, 3DS. Après extraction : liquider les 23 silent catches
-   restants avec `swallowOptional` (même pattern que Sprint 2/3/4).
-3. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
+   restants avec `swallowOptional` (même pattern que Sprint 2/3/4). Devient
+   l'action #1 après extraction de `AddressFormFiller` en Sprint 7.
+2. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
    à 485 lignes, sous le seuil. L'extraction de `selectStateInDialog`
    (~65 L, `page.evaluate` de state search) reste possible si l'on
    souhaite gagner ~13 % supplémentaires, mais n'est plus prioritaire.
+3. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
+   a ramené à 751 L. Reste extractible : `SelectClickAndCollectHelper`
+   (~160 L couvrant l'ouverture du panel pickup avec ses 3 fallbacks) et
+   éventuellement `ShippingMethodSelector` (~70 L). Non prioritaire car
+   déjà sous le seuil 800.
 4. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
 5. **Split du mégatest** — découper `celine-purchase.spec.ts` en
@@ -390,13 +432,22 @@ Priorité décroissante :
 7. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
    remplacer par des signaux réels maintenant que le scope pickup est
    entièrement scindé en trois helpers ciblés (handler, civility, refill
-   guard). Chaque sleep a désormais un contexte local suffisamment étroit
-   pour identifier un signal DOM/URL fiable.
-8. **Flake `tests/unit/fileLock.spec.ts:114`** — `cross-process contention
-preserves all writes` échoue occasionnellement (~10-20 %). Race probable
-   dans le child_process spawn. À investiguer isolément.
-9. **Historique Git** — purger `.claude/settings.local.json` et
-   `%TEMP%install-qwen.bat` (voir §9), après validation humaine.
+   guard) et que le scope adresse est isolé dans `AddressFormFiller`.
+   Chaque sleep a désormais un contexte local suffisamment étroit pour
+   identifier un signal DOM/URL fiable.
+8. **Flakes `tests/unit/fileLock.spec.ts:114` et
+   `tests/unit/testResultTracker.spec.ts:66`** — deux tests
+   cross-process (`cross-process contention preserves all writes` et
+   `cross-process concurrent record() preserves all entries`) échouent
+   occasionnellement (~10-20 %). Race probable dans le `child_process`
+   spawn — même famille. À investiguer isolément.
+9. **Duplication `safeClick`/`safeFill`/`safeSelect`/`isVisible`** —
+   `AddressFormFiller` réimplémente localement les primitives BasePage
+   (Sprint 7). À reconsidérer si un pattern de partage émerge côté
+   Payment/Login helpers ; sinon, laisser les duplications comme prix
+   de l'isolation forte.
+10. **Historique Git** — purger `.claude/settings.local.json` et
+    `%TEMP%install-qwen.bat` (voir §9), après validation humaine.
 
 ---
 

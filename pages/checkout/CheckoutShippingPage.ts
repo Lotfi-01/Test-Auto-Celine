@@ -3,25 +3,17 @@ import { BasePage } from '../BasePage';
 import { SHIPPING_METHOD_STRATEGY } from '../../utils/selectorStrategy';
 import { SELECTORS } from '../selectors';
 import { TIMEOUTS } from '../../config/testConfig';
-import { forceElementVisible } from '../../utils/formHelper';
 import { CivilitySelector } from './shipping/CivilitySelector';
 import { PickupDialogHandler, PickupDialogOptions } from './shipping/PickupDialogHandler';
+import { AddressFormFiller, ShippingAddressOptions } from './shipping/AddressFormFiller';
 
 /**
- * Shipping address options interface
+ * Re-export the address-options interface from its Sprint-7 home so any
+ * external site that imports it from `CheckoutShippingPage` keeps working.
+ * The interface itself lives in `./shipping/AddressFormFiller.ts` — do NOT
+ * add fields here; they belong on the filler's public surface.
  */
-export interface ShippingAddressOptions {
-  firstName: string;
-  lastName: string;
-  address: string;
-  city: string;
-  state?: string;
-  postalCode: string;
-  phone: string;
-  phonePrefix?: string;
-  firstNameKatakana?: string;
-  lastNameKatakana?: string;
-}
+export type { ShippingAddressOptions };
 
 /**
  * Checkout Shipping Page
@@ -51,6 +43,7 @@ export class CheckoutShippingPage extends BasePage {
 
   private readonly civilitySelector: CivilitySelector;
   private readonly pickupDialogHandler: PickupDialogHandler;
+  private readonly addressFormFiller: AddressFormFiller;
 
   constructor(page: Page) {
     super(page, 'Shipping');
@@ -84,6 +77,17 @@ export class CheckoutShippingPage extends BasePage {
       this.civilitySelector,
       this.continueToPaymentButton
     );
+
+    // Sprint 7 — standard address-form fill extracted to AddressFormFiller.
+    // Takes the anchor Locators needed by the form-visibility check and the
+    // two dropdowns whose public API stays on this façade.
+    this.addressFormFiller = new AddressFormFiller({
+      page,
+      shippingPanel: this.shippingPanel,
+      firstNameInput: this.firstNameInput,
+      prefectureSelect: this.prefectureSelect,
+      phonePrefixSelect: this.phonePrefixSelect,
+    });
   }
 
   /**
@@ -215,176 +219,17 @@ export class CheckoutShippingPage extends BasePage {
   }
 
   /**
-   * Fill shipping address form
+   * Fill shipping address form.
+   *
+   * Sprint 7: the fill logic + `fillField` / `fillOptionalField` /
+   * `ensureFormVisible` / `tryOpenFormToggle` private helpers were extracted
+   * to `AddressFormFiller`. Public signature and return contract are
+   * preserved 1:1.
+   *
    * @param options - Address details
    */
   async fillShippingAddress(options: ShippingAddressOptions): Promise<boolean> {
-    this.logStep('📝 Waiting for address form to open');
-
-    // Ensure form is visible
-    const formReady = await this.ensureFormVisible();
-    if (!formReady) {
-      this.log('Cannot open address form', 'error');
-      return false;
-    }
-
-    this.logSuccess('Address form opened');
-    this.logStep('Filling address form');
-
-    // Scope to side panel if open (for US after clicking delivery method label)
-    const isPanel = await this.shippingPanel.isVisible({ timeout: 1000 }).catch(() => false);
-    const scope = isPanel ? this.shippingPanel : this.page;
-
-    const firstNameInput = scope.locator(SELECTORS.CHECKOUT.SHIPPING.FIRST_NAME).first();
-    const lastNameInput = scope.locator(SELECTORS.CHECKOUT.SHIPPING.LAST_NAME).first();
-    const addressInput = scope.locator(SELECTORS.CHECKOUT.SHIPPING.ADDRESS).first();
-    const cityInput = scope.locator(SELECTORS.CHECKOUT.SHIPPING.CITY).first();
-    const zipcodeAddressField = scope.locator(SELECTORS.CHECKOUT.SHIPPING.ZIPCODE_ADDRESS_FIELD).first();
-    const phoneInput = scope.locator(SELECTORS.CHECKOUT.SHIPPING.PHONE).first();
-    const firstNameKatakanaInput = scope.locator(SELECTORS.CHECKOUT.SHIPPING.FIRST_NAME_KATAKANA).first();
-    const lastNameKatakanaInput = scope.locator(SELECTORS.CHECKOUT.SHIPPING.LAST_NAME_KATAKANA).first();
-
-    // Fill required fields SEQUENTIALLY to avoid race conditions
-    const firstNameOk = await this.fillField(firstNameInput, options.firstName, 'First name');
-    const lastNameOk = await this.fillField(lastNameInput, options.lastName, 'Last name');
-    const addressOk = await this.fillField(addressInput, options.address, 'Address');
-
-    // City: only fill if empty (may be pre-filled by postcode lookup)
-    let cityOk = true;
-    const cityValue = await cityInput.inputValue().catch(() => '');
-    if (!cityValue.trim()) {
-      cityOk = await this.fillField(cityInput, options.city, 'City');
-    } else {
-      this.logSuccess(`City already pre-filled: ${cityValue}`);
-    }
-
-    // State/Prefecture (AU, US)
-    if (options.state) {
-      await this.selectStateOrPrefecture(options.state);
-    }
-
-    // Zipcode in address form (AU - may differ from lookup zipcode)
-    await this.fillOptionalField(zipcodeAddressField, options.postalCode, 'Postal code (address)');
-
-    // Phone prefix (AU)
-    if (options.phonePrefix) {
-      await this.selectPhonePrefix(options.phonePrefix);
-    }
-
-    const phoneOk = await this.fillField(phoneInput, options.phone, 'Phone');
-
-    // Fill optional katakana fields (Japan-specific)
-    if (options.firstNameKatakana) {
-      await this.fillOptionalField(firstNameKatakanaInput, options.firstNameKatakana, 'First name katakana');
-    }
-    if (options.lastNameKatakana) {
-      await this.fillOptionalField(lastNameKatakanaInput, options.lastNameKatakana, 'Last name katakana');
-    }
-
-    this.logSuccess('Address form completed');
-    return firstNameOk && lastNameOk && addressOk && cityOk && phoneOk;
-  }
-
-  /**
-   * Fill a required field with logging
-   * Includes explicit focus and small delay to prevent race conditions
-   */
-  private async fillField(locator: Locator, value: string, fieldName: string): Promise<boolean> {
-    try {
-      // Wait for field to be visible
-      await locator.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-
-      // Scroll into view if needed
-      await locator.scrollIntoViewIfNeeded().catch(this.swallowOptional('fillField scrollIntoView'));
-
-      // Explicit focus before filling
-      await locator.focus();
-
-      // Small delay to ensure focus is set - workaround for browser input races
-      await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.focusDelay));
-
-      // Clear existing value
-      await locator.clear();
-
-      // Fill with value
-      await locator.fill(value);
-
-      // Verify the value was set correctly
-      const actualValue = await locator.inputValue();
-      if (actualValue !== value) {
-        this.log(`${fieldName} verification failed: expected "${value}", got "${actualValue}"`, 'warn');
-        return false;
-      }
-
-      // Small delay after fill to ensure browser processes input - workaround for input race conditions
-      await new Promise((resolve) => setTimeout(resolve, TIMEOUTS.inputDelay));
-
-      this.logSuccess(`${fieldName} filled`);
-      return true;
-    } catch (error) {
-      this.log(`Error filling ${fieldName}: ${(error as Error).message}`, 'warn');
-      return false;
-    }
-  }
-
-  /**
-   * Fill an optional field (only if visible)
-   */
-  private async fillOptionalField(locator: Locator, value: string, fieldName: string): Promise<void> {
-    const isVisible = await this.isVisible(locator, TIMEOUTS.short);
-    if (isVisible) {
-      const filled = await this.safeFill(locator, value);
-      if (filled) {
-        this.logSuccess(`${fieldName} filled`);
-      }
-    } else {
-      this.log(`${fieldName} field not required for this region`, 'info');
-    }
-  }
-
-  /**
-   * Ensure the address form is visible
-   */
-  private async ensureFormVisible(): Promise<boolean> {
-    try {
-      await this.firstNameInput.waitFor({ state: 'attached', timeout: TIMEOUTS.navigation / 2 });
-
-      const isVisible = await this.isVisible(this.firstNameInput);
-      if (!isVisible) {
-        this.log('Field found but hidden, forcing visibility...', 'info');
-        await forceElementVisible(this.firstNameInput);
-        this.logSuccess('Address form visibility forced');
-      }
-
-      return true;
-    } catch {
-      // Try to click toggle to open form
-      return await this.tryOpenFormToggle();
-    }
-  }
-
-  /**
-   * Try to open the form by clicking a toggle
-   */
-  private async tryOpenFormToggle(): Promise<boolean> {
-    this.log('Form did not open, trying to click on shipping section...', 'warn');
-
-    const toggle = this.page
-      .locator('[data-toggle*="collapse"][href*="shipping"], button[aria-controls*="shipping"]')
-      .first();
-    const clicked = await this.safeClick(toggle, { timeout: TIMEOUTS.short });
-
-    if (clicked) {
-      try {
-        await this.firstNameInput.waitFor({ state: 'attached', timeout: TIMEOUTS.medium });
-        this.logSuccess('Address form opened after clicking toggle');
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
-    return false;
+    return this.addressFormFiller.fillShippingAddress(options);
   }
 
   /**
@@ -405,38 +250,12 @@ export class CheckoutShippingPage extends BasePage {
   }
 
   /**
-   * Select state/prefecture from dropdown (US and Japan-specific)
-   * Selects the first non-empty option available
+   * Select state/prefecture from dropdown (US and Japan-specific).
+   * Sprint 7: implementation extracted to `AddressFormFiller`. Public
+   * signature and return contract are preserved 1:1.
    */
   async selectStateOrPrefecture(value?: string): Promise<boolean> {
-    const isVisible = await this.isVisible(this.prefectureSelect, TIMEOUTS.short);
-    if (!isVisible) {
-      this.log('State/Prefecture dropdown not visible - skipping', 'info');
-      return false;
-    }
-
-    // Use provided value or fall back to first non-empty option
-    const optionValue =
-      value ??
-      (await this.prefectureSelect.evaluate((select: HTMLSelectElement) => {
-        const option = Array.from(select.options).find((o) => o.value && o.value.trim() !== '');
-        return option ? option.value : null;
-      }));
-
-    if (!optionValue) {
-      this.log('No valid state/prefecture option found', 'warn');
-      return false;
-    }
-
-    const selected = await this.safeSelect(this.prefectureSelect, optionValue, {
-      timeout: TIMEOUTS.short,
-    });
-
-    if (selected) {
-      this.logSuccess(`State/Prefecture selected: ${optionValue}`);
-    }
-
-    return selected;
+    return this.addressFormFiller.selectStateOrPrefecture(value);
   }
 
   /**
@@ -765,25 +584,13 @@ export class CheckoutShippingPage extends BasePage {
   }
 
   /**
-   * Select phone prefix from dropdown (AU-specific)
+   * Select phone prefix from dropdown (AU-specific).
+   * Sprint 7: implementation extracted to `AddressFormFiller`. Public
+   * signature and return contract are preserved 1:1.
    * @param prefix - Phone prefix (e.g., '+61')
    */
   async selectPhonePrefix(prefix: string): Promise<boolean> {
-    const isVisible = await this.isVisible(this.phonePrefixSelect, TIMEOUTS.short);
-    if (!isVisible) {
-      this.log('Phone prefix dropdown not visible - skipping', 'info');
-      return false;
-    }
-
-    const selected = await this.safeSelect(this.phonePrefixSelect, prefix, {
-      timeout: TIMEOUTS.short,
-    });
-
-    if (selected) {
-      this.logSuccess(`Phone prefix selected: ${prefix}`);
-    }
-
-    return selected;
+    return this.addressFormFiller.selectPhonePrefix(prefix);
   }
 
   /**
