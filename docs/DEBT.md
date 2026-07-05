@@ -328,17 +328,20 @@ replace with stable shipping signal.` dans le code** :
   opening + verify + first store click + JS force-click) → 771 → 623
   lignes (−148, −19 %). Sprint 18 : `ShippingMethodSelector` extrait
   (bloc `selectFirstShippingMethod` avec 4 stratégies fallback label →
-  name → SHIPPING_METHOD_STRATEGY → radio/label + JS click) → **623 →
-  563 lignes (−60, −10 %)**. **Cumul Sprint 3+4+7+17+18 : ~1440 → 563
-  (−877, −61 %).** L'API publique (`fillShippingAddress`,
-  `selectStateOrPrefecture`, `selectPhonePrefix`, `selectClickAndCollect`,
-  `selectFirstShippingMethod`) reste sur la façade et délègue aux
-  helpers. La taille restante vient : (a) de `enterPostalCode` +
-  `clickOkButton` (~90 L), (b) de `continueToShipping` avec ses 2
-  `evaluate` scroll + requestSubmit (~65 L), (c) de `continueToPayment`
-  avec son evaluate() de visible payment markers (~65 L), (d) de
-  `clickSubmitShipping` (~45 L), (e) `swallowOptional` +
-  `errorName` + `logStep` + orchestration.
+  name → SHIPPING_METHOD_STRATEGY → radio/label + JS click) → 623 → 563
+  lignes (−60, −10 %). Sprint 19 : `ShippingPostalCodeHandler` extrait
+  (blocs `enterPostalCode` + `clickOkButton` privé — 4 stratégies OK
+  fallback `#submitZipCodeButton` waitForFunction-enabled → generic
+  button → link/span → Enter key) → **563 → 494 lignes (−69, −12 %)**.
+  **Cumul Sprint 3+4+7+17+18+19 : ~1440 → 494 (−946, −66 %).**
+  L'API publique (`fillShippingAddress`, `selectStateOrPrefecture`,
+  `selectPhonePrefix`, `selectClickAndCollect`, `selectFirstShippingMethod`,
+  `enterPostalCode`) reste sur la façade et délègue aux helpers. La
+  taille restante vient : (a) de `continueToShipping` avec ses 2
+  `evaluate` scroll + requestSubmit (~65 L), (b) de `continueToPayment`
+  avec son evaluate() de visible payment markers (~65 L), (c) de
+  `clickSubmitShipping` (~45 L), (d) `swallowOptional` + `errorName` +
+  `logStep` + orchestration.
 - `pages/checkout/shipping/PickupDialogHandler.ts` — Sprint 4 : nouveau
   helper 720 lignes. Sprint 5 : `PickupCivilityStrategy` extrait → 720 →
   614 lignes (−106). Sprint 6 : `PickupRefillGuard` extrait
@@ -424,6 +427,23 @@ replace with stable shipping signal.` dans le code** :
   `swallowOptional` + `errorName` PII-safe. **Sécurité Sprint 18** :
   le log `` `Failed to click shipping label: ${e}` `` (raw Playwright
   exception) est converti en `` `Failed to click shipping label: ${errorName(e)}` ``.
+- `pages/checkout/shipping/ShippingPostalCodeHandler.ts` — **nouveau
+  (Sprint 19)** : 190 lignes. Contient la classe
+  `ShippingPostalCodeHandler` avec `enter(postalCode)` public et
+  `clickOkButton()` privé — 4 stratégies fallback OK
+  (`#submitZipCodeButton` avec waitForFunction-enabled → generic
+  `ZIPCODE_OK_BUTTON` → `ZIPCODE_OK_LINK` → press Enter). Constructor
+  `(deps: ShippingPostalCodeDeps)` avec 4 callbacks bindés sur BasePage
+  (`safeFill`, `safeClick`, `waitForNetworkIdle`, `waitForDomContent`)
+  pour éviter la duplication et le couplage inheritance (pattern
+  Sprint 18 étendu). Aucun import `CheckoutShippingPage`, aucun
+  `force: true` / `evaluate()` / `waitForTimeout` réel dans le bloc.
+  Logger `TestLogger.scoped('PostalCode')`. Primitives locales
+  `swallowOptional` + `errorName` PII-safe. **Sécurité Sprint 19** :
+  le log critique `` `Postal code filled: ${postalCode}` `` (raw user
+  postcode = PII) est converti en label statique
+  `'Postal code filled'`. Aucun autre log ou throw ne référence la
+  valeur `postalCode`.
 - `pages/checkout/shipping/AddressFormFiller.ts` — **nouveau (Sprint 7)** :
   437 lignes. Contient `fillShippingAddress(options)` +
   `selectStateOrPrefecture(value?)` + `selectPhonePrefix(prefix)` +
@@ -609,18 +629,16 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 19 (backlog priorisé)
+## 10. Actions Sprint 20 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **Réduire `CheckoutShippingPage.ts` sous 500 L** (optionnel) — Sprint 18
-   a ramené à 563 L. Reste extractible : `enterPostalCode` +
-   `clickOkButton` (~90 L, gestion postal code + submit ZIP button avec
-   fallbacks), `continueToPayment` (~65 L, evaluate visible payment
-   markers), `continueToShipping` (~65 L, evaluate scroll + requestSubmit),
-   `clickSubmitShipping` (~45 L). Extractions individuelles possibles
-   mais non urgentes — la façade est désormais à −61 % du max historique
-   (~1440 L).
+1. **Réduire `CheckoutShippingPage.ts` sous 450 L** (optionnel) — Sprint 19
+   a ramené à 494 L. Reste extractible : `continueToShipping` (~65 L,
+   evaluate scroll + requestSubmit), `continueToPayment` (~65 L,
+   evaluate visible payment markers), `clickSubmitShipping` (~45 L).
+   Extractions individuelles possibles mais non urgentes — la façade
+   est désormais à −66 % du max historique (~1440 L).
 2. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
 3. **Split du mégatest** — découper `celine-purchase.spec.ts` en

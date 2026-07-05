@@ -7,6 +7,7 @@ import { PickupDialogHandler, PickupDialogOptions } from './shipping/PickupDialo
 import { AddressFormFiller, ShippingAddressOptions } from './shipping/AddressFormFiller';
 import { SelectClickAndCollectHelper } from './shipping/SelectClickAndCollectHelper';
 import { ShippingMethodSelector } from './shipping/ShippingMethodSelector';
+import { ShippingPostalCodeHandler } from './shipping/ShippingPostalCodeHandler';
 
 /**
  * Re-export the address-options interface from its Sprint-7 home so any
@@ -47,6 +48,7 @@ export class CheckoutShippingPage extends BasePage {
   private readonly addressFormFiller: AddressFormFiller;
   private readonly selectClickAndCollectHelper: SelectClickAndCollectHelper;
   private readonly shippingMethodSelector: ShippingMethodSelector;
+  private readonly shippingPostalCodeHandler: ShippingPostalCodeHandler;
 
   constructor(page: Page) {
     super(page, 'Shipping');
@@ -109,6 +111,19 @@ export class CheckoutShippingPage extends BasePage {
       this.firstNameInput,
       (locator, options) => this.safeClickWithLabelFallback(locator, options)
     );
+
+    // Sprint 19 — Postal code entry (`enterPostalCode` +
+    // `clickOkButton`) extracted to `ShippingPostalCodeHandler`.
+    // Receives `page` + 4 bound BasePage callbacks so the primitives'
+    // internal behavior stays owned by BasePage — no duplication.
+    // Behavior preserved 1:1.
+    this.shippingPostalCodeHandler = new ShippingPostalCodeHandler({
+      page,
+      safeFill: (locator, value, options) => this.safeFill(locator, value, options),
+      safeClick: (locator, options) => this.safeClick(locator, options),
+      waitForNetworkIdle: (timeout) => this.waitForNetworkIdle(timeout),
+      waitForDomContent: (timeout) => this.waitForDomContent(timeout),
+    });
   }
 
   /**
@@ -140,95 +155,11 @@ export class CheckoutShippingPage extends BasePage {
    * @param postalCode - Postal/ZIP code
    */
   async enterPostalCode(postalCode: string): Promise<boolean> {
-    this.logStep('🔍 Looking for zipcode field');
-
-    // Prioritize the exact US zip field the user specified
-    const postalCodeInput = this.page.locator('#zipCodeForShippingMethods, input.shippingZipCode, input[name*="postalCode"]').first();
-
-    // Wait for the zipcode field to appear and become visible
-    // Note: isVisible() is an instant check (timeout param is deprecated in Playwright 1.33+),
-    // so we must use waitFor() which properly waits for the element.
-    try {
-      await postalCodeInput.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation });
-      this.log('Zipcode field found and visible');
-    } catch {
-      this.log('No initial zipcode field found - proceeding directly to form', 'info');
-      return true;
-    }
-
-    // Fill postal code
-    const filled = await this.safeFill(postalCodeInput, postalCode);
-    if (!filled) return false;
-    this.logSuccess(`Postal code filled: ${postalCode}`);
-
-    // Sprint 3: waitForTimeout(100) padding removed — the Tab press already
-    // triggers the async validation, and `clickOkButton` below has its own
-    // `submitZipButton.waitFor({ state: 'visible' })` so the OK button
-    // becoming ready is a proper web-first signal.
-    await postalCodeInput.press('Tab').catch(this.swallowOptional('postal code Tab blur'));
-
-    // Click OK button using multiple strategies
-    const okClicked = await this.clickOkButton();
-    if (okClicked) {
-      this.logStep('📝 Waiting for shipping options to appear');
-      await this.waitForNetworkIdle(TIMEOUTS.medium);
-    }
-
-    return true;
-  }
-
-  /**
-   * Click OK button to validate postal code
-   * Uses #submitZipCodeButton as primary, then generic button, link, and Enter fallbacks
-   */
-  private async clickOkButton(): Promise<boolean> {
-    // Primary: use specific ID selector
-    const submitZipButton = this.page.locator('#submitZipCodeButton').first();
-    try {
-      // After fill + Tab, wait for the OK to become visible AND enabled
-      await submitZipButton.waitFor({ state: 'visible', timeout: TIMEOUTS.medium });
-      await this.page
-        .waitForFunction((el) => {
-          const btn = el as HTMLButtonElement;
-          return !btn.disabled && !btn.hasAttribute('disabled');
-        }, await submitZipButton.elementHandle(), { timeout: TIMEOUTS.medium })
-        .catch(this.swallowOptional('waitForFunction OK-button-enabled'));
-
-      if (await this.safeClick(submitZipButton, { timeout: TIMEOUTS.short })) {
-        await this.waitForNetworkIdle(TIMEOUTS.medium);
-        this.logSuccess('OK button clicked (#submitZipCodeButton)');
-        return true;
-      }
-    } catch {
-      // Continue to fallbacks
-    }
-
-    // Fallback: generic button selector
-    const okButton = this.page.locator(SELECTORS.CHECKOUT.SHIPPING.ZIPCODE_OK_BUTTON).first();
-    if (await this.safeClick(okButton, { timeout: TIMEOUTS.short })) {
-      await this.waitForNetworkIdle(TIMEOUTS.medium);
-      this.logSuccess('OK button clicked (button)');
-      return true;
-    }
-
-    // Fallback: link/span
-    const okLink = this.page.locator(SELECTORS.CHECKOUT.SHIPPING.ZIPCODE_OK_LINK).first();
-    if (await this.safeClick(okLink, { timeout: TIMEOUTS.short })) {
-      await this.waitForDomContent();
-      this.logSuccess('OK button clicked (link/span)');
-      return true;
-    }
-
-    // Fallback: press Enter
-    const postalCodeInput = this.page.locator(SELECTORS.CHECKOUT.SHIPPING.ZIPCODE_INPUT).first();
-    try {
-      await postalCodeInput.press('Enter');
-      await this.waitForNetworkIdle(TIMEOUTS.medium);
-      this.logSuccess('Enter key pressed to validate postal code');
-      return true;
-    } catch {
-      return false;
-    }
+    // Sprint 19: full body extracted to `ShippingPostalCodeHandler`.
+    // `clickOkButton` (previously a private helper of this class, with a
+    // single caller — `enterPostalCode` itself) is now private inside
+    // the handler. Public signature and return contract preserved 1:1.
+    return this.shippingPostalCodeHandler.enter(postalCode);
   }
 
   /**
