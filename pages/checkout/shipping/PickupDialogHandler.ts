@@ -1,8 +1,9 @@
 import { Page, Locator } from '@playwright/test';
 import { TIMEOUTS } from '../../../config/testConfig';
-import { forceCheckRadio, setNativeValue } from '../../../utils/formHelper';
+import { setNativeValue } from '../../../utils/formHelper';
 import { TestLogger } from '../../../utils/logger';
 import { CivilitySelector } from './CivilitySelector';
+import { PickupCivilityStrategy } from './PickupCivilityStrategy';
 
 /**
  * Sprint 4 — extracted from `CheckoutShippingPage` (fillPickupAddressForm
@@ -91,11 +92,18 @@ function errorName(err: unknown): string {
 }
 
 export class PickupDialogHandler {
+  private readonly pickupCivilityStrategy: PickupCivilityStrategy;
+
   constructor(
     private readonly page: Page,
     private readonly civilitySelector: CivilitySelector,
     private readonly continueToPaymentButton: Locator
-  ) {}
+  ) {
+    // Sprint 5 — civility fallback chain extracted to PickupCivilityStrategy.
+    // The shared `civilitySelector` is still passed through so Strategy D
+    // (page-wide fallback) keeps working.
+    this.pickupCivilityStrategy = new PickupCivilityStrategy(civilitySelector);
+  }
 
   /**
    * Public entry point — fills the "PURCHASER INFORMATION" dialog for
@@ -118,7 +126,7 @@ export class PickupDialogHandler {
       await this.selectStateInDialog(options.state, dialog);
     }
 
-    await this.selectCivilityInDialog(options.title, dialog);
+    await this.pickupCivilityStrategy.select(dialog, options.title);
 
     // Postcode early (may trigger re-renders/autocomplete)
     const postcodeLocator = dialog
@@ -232,120 +240,6 @@ export class PickupDialogHandler {
     } else {
       scopedLogger.warn('State select not found page-wide');
     }
-  }
-
-  private async selectCivilityInDialog(title: string, dialog: Locator): Promise<void> {
-    const titleAcceptable = ((): string[] => {
-      const t = title.toLowerCase();
-      const variants: Record<string, string[]> = {
-        mr: ['mr', 'm', 'mr.'],
-        m: ['m', 'mr', 'mr.'],
-        mrs: ['mrs', 'mme', 'mrs.'],
-        mme: ['mme', 'mrs', 'mrs.'],
-        ms: ['ms', 'mlle', 'miss', 'ms.'],
-        mlle: ['mlle', 'ms', 'miss', 'ms.'],
-      };
-      return variants[t] || ['mr', 'm', 'mrs', 'mme', 'ms', 'mlle'];
-    })();
-
-    let selected = false;
-
-    try {
-      // Strategy A: Use accessible role + name inside the dialog (best for modern a11y)
-      for (const token of titleAcceptable) {
-        const radioByRole = dialog.getByRole('radio', { name: new RegExp(token, 'i') }).first();
-        if (await radioByRole.isVisible({ timeout: 300 }).catch(() => false)) {
-          await forceCheckRadio(radioByRole);
-          scopedLogger.success(`Civility radio checked (role+name): ${token}`);
-          selected = true;
-          break;
-        }
-      }
-
-      if (!selected) {
-        // Strategy B: Find label by text inside dialog, then associated input
-        for (const token of titleAcceptable) {
-          const label = dialog
-            .locator('label')
-            .filter({ hasText: new RegExp(token, 'i') })
-            .first();
-          if (await label.isVisible({ timeout: 300 }).catch(() => false)) {
-            const forId = await label.getAttribute('for').catch(() => null);
-            let radio: Locator;
-            if (forId) {
-              radio = dialog.locator(`#${forId.replace(/"/g, '\\"')}`);
-            } else {
-              // fallback to sibling or descendant radio
-              radio = label
-                .locator(
-                  'xpath=preceding-sibling::input[1] | xpath=following-sibling::input[1] | input[type="radio"]'
-                )
-                .first();
-            }
-            if (
-              (await radio.count()) > 0 &&
-              (await radio.isVisible({ timeout: 200 }).catch(() => false))
-            ) {
-              await forceCheckRadio(radio);
-              scopedLogger.success(`Civility radio checked (label text): ${token}`);
-              selected = true;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!selected) {
-        // Strategy C: any radio inside dialog whose label, value or id matches
-        const allRadios = dialog.locator('input[type="radio"]');
-        const count = await allRadios.count().catch(() => 0);
-        for (let i = 0; i < count; i++) {
-          const radio = allRadios.nth(i);
-          const id = await radio.getAttribute('id').catch(() => '');
-          const val = ((await radio.getAttribute('value').catch(() => '')) || '').toLowerCase();
-          let labelText = '';
-          if (id) {
-            labelText =
-              (await dialog
-                .locator(`label[for="${id}"]`)
-                .textContent()
-                .catch(() => '')) || '';
-          }
-          if (!labelText) {
-            labelText = (await radio.getAttribute('aria-label').catch(() => '')) || '';
-          }
-          const lowerLabel = (labelText + ' ' + val + ' ' + id).toLowerCase().replace(/\./g, '');
-          if (titleAcceptable.some((tok) => lowerLabel.includes(tok))) {
-            await forceCheckRadio(radio);
-            scopedLogger.success(
-              `Civility radio checked (dialog scan): ${labelText.trim() || val || id}`
-            );
-            selected = true;
-            break;
-          }
-        }
-      }
-
-      if (!selected) {
-        // Fallback to the broad robust helper (page level)
-        selected = await this.civilitySelector.select(title, dialog);
-        if (selected) {
-          scopedLogger.success(`Civility radio checked (fallback helper): ${title}`);
-        }
-      }
-    } catch (e) {
-      scopedLogger.warn(`Civility selection error in dialog: ${errorName(e)}`);
-    }
-
-    if (!selected) {
-      scopedLogger.warn('Could not reliably select civility title');
-    }
-
-    // Sprint 3: `waitForTimeout(60)` removed — `forceCheckRadio` dispatches
-    // `input`/`change`/`click` synchronously, so the check state is committed
-    // before this returns. The caller immediately reads the postcode field
-    // via `isVisible({ timeout: 800 })`, which is itself a proper web-first
-    // wait for any re-render triggered by the civility change.
   }
 
   private async fillByLabelInDialog(
