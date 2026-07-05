@@ -4,6 +4,7 @@ import { SELECTORS } from '../selectors';
 import { AdyenHelper } from '../../utils/adyenHelper';
 import { CybersourceHelper } from '../../utils/cybersourceHelper';
 import { TIMEOUTS } from '../../config/testConfig';
+import { PayPalPaymentFlow } from './payment/PayPalPaymentFlow';
 
 /**
  * Payment information options
@@ -39,6 +40,8 @@ export class CheckoutPaymentPage extends BasePage {
   readonly confirmationMessage: Locator;
   readonly orderNumber: Locator;
 
+  private readonly payPalPaymentFlow: PayPalPaymentFlow;
+
   constructor(page: Page) {
     super(page, 'Payment');
 
@@ -58,6 +61,11 @@ export class CheckoutPaymentPage extends BasePage {
     // Confirmation
     this.confirmationMessage = page.locator(SELECTORS.CHECKOUT.CONFIRMATION.TITLE).first();
     this.orderNumber = page.locator(SELECTORS.CHECKOUT.CONFIRMATION.ORDER_NUMBER).first();
+
+    // Sprint 12 — PayPal flow extracted to PayPalPaymentFlow. The shared
+    // Terms handling stays on this façade (Cybersource + Adyen share the
+    // same terms surface), so the flow receives it as a callback.
+    this.payPalPaymentFlow = new PayPalPaymentFlow(page, () => this.acceptTermsAndConditions());
   }
 
   /**
@@ -532,153 +540,14 @@ export class CheckoutPaymentPage extends BasePage {
 
   /**
    * Run the full PayPal payment flow: select PayPal → open popup → login → Agree & Pay Now.
-   * The popup belongs to the same browser context; we listen for `page` event before click.
-   * On return, the parent Celine page is expected to transition to Order-Confirm.
+   *
+   * Sprint 12: full body extracted to `PayPalPaymentFlow`. Public
+   * signature and return contract are preserved 1:1. Terms handling
+   * stays here (Cybersource + Adyen share the same terms surface) and
+   * is delegated back via the constructor-injected callback.
    */
   async payViaPayPal(email: string, password: string): Promise<void> {
-    this.logStep('📝 Initiating PayPal payment flow');
-
-    // 1) Select PayPal radio. The Celine billing form drives the Submit button
-    //    label/state via change-event listeners on the payment radios — clicking
-    //    the label sometimes sets el.checked without the event chain firing, leaving
-    //    the form in its initial state (Submit stays disabled, button keeps default
-    //    "PURCHASE" label). We click the label, then dispatch change/input/click
-    //    explicitly, and verify by waiting for the Submit button to become enabled.
-    // Adyen-style (FR/US/AU): #lb_paypal + #rb_paypal
-    // Cybersource-style (TH): label[for="select-payment-method-PAYPAL"] + #select-payment-method-PAYPAL
-    const paypalLabel = this.page.locator('#lb_paypal, label[for="select-payment-method-PAYPAL"]').first();
-    const paypalRadio = this.page.locator('#rb_paypal, #select-payment-method-PAYPAL').first();
-
-    await paypalLabel.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-    await paypalLabel
-      .scrollIntoViewIfNeeded()
-      .catch(this.swallowOptional('PayPal label scrollIntoView'));
-    // Give Celine's billing form 2s to fully hydrate its radio change-listeners
-    // before clicking — otherwise the click fires before listeners are attached
-    // and the Submit button stays disabled.
-    await this.page.waitForTimeout(300);
-    await paypalLabel.click().catch(this.swallowOptional('PayPal label click'));
-
-    // Force the radio into checked state AND fire the event chain the page listens for.
-    await paypalRadio
-      .evaluate((el: HTMLInputElement) => {
-        if (!el.checked) el.checked = true;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      })
-      .catch(this.swallowOptional('PayPal radio dispatch'));
-
-    if (!(await paypalRadio.isChecked().catch(() => false))) {
-      throw new Error('PayPal radio is not checked after click + dispatch');
-    }
-    this.logSuccess('PayPal radio selected (rb_paypal.checked=true, change dispatched)');
-
-    // 2) Accept terms & conditions (CGV) — required before clicking PayPal CTA
-    const termsOk = await this.acceptTermsAndConditions();
-    if (!termsOk) {
-      throw new Error('Terms checkbox could not be accepted before PayPal submit');
-    }
-
-    // 3) Locate the PayPal SDK "Pay with PayPal" CTA. PayPal Smart Buttons v7 render
-    //    inside a cross-origin iframe, so poll the top frame and PayPal-origin frames.
-    // Multiple PayPal SDK render variants observed on Celine:
-    // - Adyen FR/US/AU: div.paypal-button-label-container (label container with SVG)
-    // - Cybersource TH: img.paypal-button-logo[aria-label="paypal"] (raw logo image)
-    // - Generic SDK markers: [data-funding-source="paypal"], paypal-button-row
-    const ctaSelector =
-      '[data-funding-source="paypal"], div.paypal-button-label-container, div[class*="paypal-button-row"], img.paypal-button-logo[aria-label="paypal"], [class*="paypal-button"][role="link"], [class*="paypal-button"][role="button"]';
-
-    let paypalCta: Locator | null = null;
-    const ctaDeadline = Date.now() + TIMEOUTS.navigation;
-
-    // Improved polling: use short waits + break early. Avoids many tiny timeouts.
-    while (Date.now() < ctaDeadline && !paypalCta) {
-      // Try top level first
-      const topBtn = this.page.locator(ctaSelector).first();
-      if (await topBtn.isVisible({ timeout: 250 }).catch(() => false)) {
-        paypalCta = topBtn;
-        this.log('PayPal CTA found on top page', 'info');
-        break;
-      }
-
-      // Check known PayPal frames
-      for (const frame of this.page.frames()) {
-        if (frame === this.page.mainFrame()) continue;
-        if (!/paypal/i.test(frame.url())) continue;
-        const frameBtn = frame.locator(ctaSelector).first();
-        if (await frameBtn.isVisible({ timeout: 250 }).catch(() => false)) {
-          paypalCta = frameBtn;
-          this.log(`PayPal CTA found in iframe: ${frame.url().slice(0, 80)}`, 'info');
-          break;
-        }
-      }
-
-      if (!paypalCta) {
-        await this.page.waitForTimeout(80);
-      }
-    }
-
-    if (!paypalCta) {
-      throw new Error('PayPal CTA not found on top page or any PayPal iframe within timeout');
-    }
-
-    await paypalCta.scrollIntoViewIfNeeded().catch(this.swallowOptional('PayPal CTA scrollIntoView'));
-
-    // 4) Arm popup listener BEFORE clicking — PayPal SDK opens a popup window
-    const popupPromise = this.page.context().waitForEvent('page', { timeout: TIMEOUTS.navigation });
-    await paypalCta.click();
-    this.logSuccess('PayPal CTA clicked — waiting for popup');
-
-    const popup = await popupPromise;
-    await popup.waitForLoadState('domcontentloaded');
-    this.log(`PayPal popup opened: ${popup.url().slice(0, 100)}`, 'info');
-
-    // 4) Email step — may be pre-filled by sandbox autofill
-    const emailInput = popup.locator('input#email[name="login_email"]').first();
-    await emailInput.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation });
-    const currentEmail = (await emailInput.inputValue().catch(() => '')) || '';
-    if (currentEmail.trim() !== email.trim()) {
-      await emailInput.fill(email);
-      this.logSuccess('PayPal email filled');
-    } else {
-      this.log('PayPal email already pre-filled', 'info');
-    }
-
-    // 5) Password — visible on same form OR on next view after clicking Log In
-    const passwordInput = popup.locator('input#password[name="login_password"]').first();
-    const passwordVisibleNow = await passwordInput.isVisible({ timeout: 1500 }).catch(() => false);
-
-    if (passwordVisibleNow) {
-      // Single-form variant: both fields visible together, one submit
-      await passwordInput.fill(password);
-      this.logSuccess('PayPal password filled (single-form)');
-      await popup.locator('#btnLogin').first().click();
-      this.logSuccess('PayPal Log In clicked');
-    } else {
-      // Email-first variant: #btnNext advances to password page, then #btnLogin submits
-      await popup.locator('#btnNext').first().click();
-      this.logSuccess('PayPal Next clicked (email step)');
-      await passwordInput.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation });
-      await passwordInput.fill(password);
-      this.logSuccess('PayPal password filled');
-      await popup.locator('#btnLogin').first().click();
-      this.logSuccess('PayPal Log In clicked (password step)');
-    }
-
-    // 6) Review page → Agree & Pay Now
-    const payButton = popup
-      .locator('button[data-id="payment-submit-btn"], button[data-testid="submit-button-initial"]')
-      .first();
-    await payButton.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation });
-    await payButton.click();
-    this.logSuccess('PayPal Agree & Pay Now clicked');
-
-    // 7) Popup closes when PayPal hands control back to Celine
-    await popup.waitForEvent('close', { timeout: TIMEOUTS.navigation }).catch(() => {
-      this.log('PayPal popup did not emit close event within timeout — continuing', 'warn');
-    });
-
-    this.logSuccess('PayPal flow completed');
+    await this.payPalPaymentFlow.pay(email, password);
   }
 
   /**
