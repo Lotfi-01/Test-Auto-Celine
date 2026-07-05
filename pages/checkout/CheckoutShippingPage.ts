@@ -8,6 +8,7 @@ import { AddressFormFiller, ShippingAddressOptions } from './shipping/AddressFor
 import { SelectClickAndCollectHelper } from './shipping/SelectClickAndCollectHelper';
 import { ShippingMethodSelector } from './shipping/ShippingMethodSelector';
 import { ShippingPostalCodeHandler } from './shipping/ShippingPostalCodeHandler';
+import { ContinueToShippingHandler } from './shipping/ContinueToShippingHandler';
 
 /**
  * Re-export the address-options interface from its Sprint-7 home so any
@@ -49,6 +50,7 @@ export class CheckoutShippingPage extends BasePage {
   private readonly selectClickAndCollectHelper: SelectClickAndCollectHelper;
   private readonly shippingMethodSelector: ShippingMethodSelector;
   private readonly shippingPostalCodeHandler: ShippingPostalCodeHandler;
+  private readonly continueToShippingHandler: ContinueToShippingHandler;
 
   constructor(page: Page) {
     super(page, 'Shipping');
@@ -123,6 +125,17 @@ export class CheckoutShippingPage extends BasePage {
       safeClick: (locator, options) => this.safeClick(locator, options),
       waitForNetworkIdle: (timeout) => this.waitForNetworkIdle(timeout),
       waitForDomContent: (timeout) => this.waitForDomContent(timeout),
+    });
+
+    // Sprint 21 — Address-submit / continue-to-shipping transition
+    // extracted to `ContinueToShippingHandler`. Receives `page`, the 2
+    // anchor Locators the block uses, and a bound `safeClick` callback
+    // (kept on BasePage — no primitive duplication). Behavior preserved 1:1.
+    this.continueToShippingHandler = new ContinueToShippingHandler({
+      page,
+      validateAddressButton: this.validateAddressButton,
+      continueToPaymentButton: this.continueToPaymentButton,
+      safeClick: (locator, options) => this.safeClick(locator, options),
     });
   }
 
@@ -224,73 +237,10 @@ export class CheckoutShippingPage extends BasePage {
    * Click submit address button to validate address
    */
   async continueToShipping(): Promise<void> {
-    try {
-      await this.validateAddressButton.waitFor({ state: 'attached', timeout: TIMEOUTS.element });
-
-      // Scroll to button
-      await this.validateAddressButton.evaluate((el) => {
-        el.scrollIntoView({ behavior: 'instant', block: 'center' });
-      });
-
-      // Wait for button to be enabled
-      const isEnabled = await this.validateAddressButton.isEnabled();
-      if (!isEnabled) {
-        this.log('Submit address button disabled, waiting...', 'warn');
-        await this.page
-          .waitForFunction(
-            (btn) => !(btn as HTMLButtonElement).disabled,
-            await this.validateAddressButton.elementHandle(),
-            { timeout: TIMEOUTS.medium }
-          )
-          .catch(() => this.log('Button still disabled, attempting click...', 'warn'));
-      }
-
-      // Click button — try Playwright click first, then JS click + form.requestSubmit()
-      // as a fallback. JP standard delivery's SUBMIT ADDRESS sometimes needs the form
-      // submit event explicitly fired (the JS click handler doesn't always trigger).
-      const clicked = await this.safeClick(this.validateAddressButton, { timeout: TIMEOUTS.short });
-      if (!clicked) {
-        await this.validateAddressButton.evaluate((el: HTMLElement) => el.click());
-      }
-      this.logSuccess('Submit address button clicked');
-
-      // Belt-and-suspenders: also fire the form submit event explicitly. No-op if the
-      // first click already navigated; otherwise it triggers the onsubmit handler.
-      await this.page
-        .evaluate(() => {
-          const btn = document.querySelector(
-            'button#submitAddressShipping, button.submit-address[type="submit"], button[type="submit"][class*="address"]'
-          ) as HTMLButtonElement | null;
-          const form = btn?.closest('form') as HTMLFormElement | null;
-          if (form) {
-            if (typeof form.requestSubmit === 'function') {
-              try {
-                form.requestSubmit(btn || undefined);
-              } catch {
-                form.submit();
-              }
-            } else {
-              form.submit();
-            }
-          }
-        })
-        .catch(this.swallowOptional('address form belt-and-suspenders requestSubmit'));
-
-      // Wait for actual transition — URL change OR continue-to-payment button.
-      // Use the navigation timeout (30s) not formSubmit (3s) — JP server-side validation
-      // of the address can take 10-15s before the page transitions.
-      // NOTE: do NOT race against networkIdle here. Pages have continuous GTM/analytics
-      // polling that resolves quickly but does NOT mean the form has been processed.
-      await Promise.race([
-        this.page.waitForURL(/payment|paiement/, { timeout: TIMEOUTS.navigation }),
-        this.continueToPaymentButton.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation }),
-      ]).catch(() => {
-        this.log('Address submit did not transition to payment within navigation timeout', 'warn');
-      });
-    } catch (error) {
-      this.log(`Error validating address: ${(error as Error).message}`, 'error');
-      throw error;
-    }
+    // Sprint 21: full body extracted to `ContinueToShippingHandler`.
+    // Public signature and return contract preserved 1:1 (Promise<void>,
+    // rethrows on outer catch).
+    return this.continueToShippingHandler.continue();
   }
 
   /**
