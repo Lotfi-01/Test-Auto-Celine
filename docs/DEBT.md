@@ -374,12 +374,14 @@ replace with stable shipping signal.` dans le code** :
   helper `swallowOptional` + `errorName`) après liquidation des 23 silent
   catches. Sprint 12 : `PayPalPaymentFlow` extrait
   (`payViaPayPal(email, password)` public préservé, corps déplacé 1:1)
-  → **913 → 782 lignes (−131, −14 %)**. L'API publique reste intacte ;
-  la façade instancie `new PayPalPaymentFlow(page, () => this.acceptTermsAndConditions())`
-  au constructor et délègue via `this.payPalPaymentFlow.pay(email, password)`.
-  Le helper n'importe pas `CheckoutPaymentPage` (callback pour Terms,
-  aucun cycle). Reste extractible : `AfterpayPaymentFlow`
-  (`payViaAfterpay`, ~100 L), `PaymentTermsHandler`
+  → 913 → 782 lignes (−131, −14 %). Sprint 13 : `AfterpayPaymentFlow`
+  extrait (`payViaAfterpay(email, password)` public préservé, corps
+  déplacé 1:1) → **782 → 704 lignes (−78, −10 %)**. **Cumul Sprint
+  12+13 : 913 → 704 (−209, −23 %).** L'API publique reste intacte ; la
+  façade instancie les 2 flows au constructor et délègue via
+  `this.payPalPaymentFlow.pay(...)` / `this.afterpayPaymentFlow.pay(...)`.
+  Aucun helper n'importe `CheckoutPaymentPage` (callback pour Terms,
+  aucun cycle). Reste extractible : `PaymentTermsHandler`
   (`acceptTermsAndConditions`, ~55 L). Non prioritaire.
 - `pages/checkout/payment/PayPalPaymentFlow.ts` — **nouveau (Sprint 12)** :
   225 lignes. Flow PayPal complet : select radio + accept terms
@@ -392,6 +394,24 @@ replace with stable shipping signal.` dans le code** :
   Sprint 4). Primitives locales `swallowOptional(label)` +
   `errorName(err)` PII-safe (pattern Sprint 8). Aucun catch silencieux ;
   chaque catch loggue au moins un label technique + `error.name`.
+- `pages/checkout/payment/AfterpayPaymentFlow.ts` — **nouveau (Sprint 13)** :
+  197 lignes. Flow Afterpay complet : select radio + accept terms
+  (callback) + Continue-to-Afterpay CTA + full-page nav portal +
+  landing-screen race (fresh vs saved-session "Not you?") + email +
+  password + Confirm → retour Celine Order-Confirm. Aucun import
+  `CheckoutPaymentPage` ; dépendances via constructor
+  (`page: Page`, `acceptTerms: () => Promise<boolean>`) — identique à
+  PayPal. Logs via `TestLogger.scoped('Afterpay')`. Primitives locales
+  `swallowOptional(label)` + `errorName(err)` PII-safe. **Sécurité
+  Sprint 13** : les 2 logs URL du bloc (`Redirected to Afterpay portal:
+${url}` et `Afterpay Confirm clicked — back on Celine: ${url}`)
+  utilisaient `.slice(0, 100)` en pré-Sprint-13 — truncation faible
+  pouvant leaker session tokens portal ou order-confirm identifiers.
+  Sprint 13 remplace par `redactUrl(page.url())` : fonction pure
+  exportée qui parse via `new URL()` et retourne uniquement
+  `origin + pathname` (aucun query, aucun fragment). Redaction
+  non-fonctionnelle autorisée par le prompt Sprint 13. Comportement
+  runtime préservé — seule la chaîne loggée change.
 - `utils/emailReporter.ts` — 630 lignes → séparer template HTML / SMTP transport.
 - `tests/celine-purchase.spec.ts` — 507 lignes → splitter en 4-5 specs ciblés.
 
@@ -498,21 +518,25 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 13 (backlog priorisé)
+## 10. Actions Sprint 14 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **`AfterpayPaymentFlow` extraction** (optionnel) — Sprint 12 a extrait
-   PayPal (`payViaPayPal` → délégué `PayPalPaymentFlow`, façade 913→782 L).
-   L'extraction analogue d'Afterpay (`payViaAfterpay`, ~100 L) ramènerait
-   la façade à ~700 L. Pattern identique : constructor
-   `(page: Page, acceptTerms: () => Promise<boolean>)` + délégué depuis
-   la façade. Low-risk car Afterpay est aussi isolé que PayPal.
-2. **`PaymentTermsHandler` extraction** (optionnel après Afterpay) —
-   `acceptTermsAndConditions` (~55 L) est partagé entre CC / PayPal /
-   Afterpay. Extraction pourrait déduire les callbacks passés à PayPal
-   et Afterpay flows (dépendance directe au lieu de callback via
-   façade). À évaluer post-Sprint 13 §1.
+1. **`PaymentTermsHandler` extraction** (optionnel) — Sprint 13 a extrait
+   Afterpay (façade 782 → 704 L). `acceptTermsAndConditions` (~55 L)
+   reste partagé entre CC / PayPal / Afterpay via callback. Extraction
+   pourrait déduplifier les 2 callbacks passés à PayPal et Afterpay
+   flows (dépendance directe au lieu de callback via façade). À
+   évaluer : le gain (−55 L côté façade + réutilisation directe) vs
+   le coût (nouveau helper avec dépendances multiples). Non urgent car
+   la façade est déjà à 704 L, sous ~750 L.
+2. **Durcir les logs URL du PayPal helper** — Sprint 13 a introduit
+   `redactUrl(rawUrl)` dans `AfterpayPaymentFlow` (parse `new URL()`,
+   retourne uniquement `origin + pathname`). Le PayPal helper (Sprint 12)
+   utilise encore `.slice(0, 100)` sur `popup.url()` et `frame.url()`
+   (potentiel leak de query params PayPal SDK). Sprint 14 peut extraire
+   `redactUrl` dans `pages/checkout/payment/urlRedaction.ts` (fonction
+   pure exportable + spec unitaire) et migrer les 2 sites PayPal.
 3. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
    à 485 lignes, sous le seuil. L'extraction de `selectStateInDialog`
    (~65 L, `page.evaluate` de state search) reste possible si l'on
