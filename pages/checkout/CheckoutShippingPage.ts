@@ -1,12 +1,12 @@
 import { Page, Locator } from '@playwright/test';
 import { BasePage } from '../BasePage';
-import { SHIPPING_METHOD_STRATEGY } from '../../utils/selectorStrategy';
 import { SELECTORS } from '../selectors';
 import { TIMEOUTS } from '../../config/testConfig';
 import { CivilitySelector } from './shipping/CivilitySelector';
 import { PickupDialogHandler, PickupDialogOptions } from './shipping/PickupDialogHandler';
 import { AddressFormFiller, ShippingAddressOptions } from './shipping/AddressFormFiller';
 import { SelectClickAndCollectHelper } from './shipping/SelectClickAndCollectHelper';
+import { ShippingMethodSelector } from './shipping/ShippingMethodSelector';
 
 /**
  * Re-export the address-options interface from its Sprint-7 home so any
@@ -46,6 +46,7 @@ export class CheckoutShippingPage extends BasePage {
   private readonly pickupDialogHandler: PickupDialogHandler;
   private readonly addressFormFiller: AddressFormFiller;
   private readonly selectClickAndCollectHelper: SelectClickAndCollectHelper;
+  private readonly shippingMethodSelector: ShippingMethodSelector;
 
   constructor(page: Page) {
     super(page, 'Shipping');
@@ -96,6 +97,18 @@ export class CheckoutShippingPage extends BasePage {
     // fallbacks, JS evaluate calls, and the store-selection dance).
     // Behavior preserved 1:1.
     this.selectClickAndCollectHelper = new SelectClickAndCollectHelper(page);
+
+    // Sprint 18 — Shipping method selection extracted to
+    // ShippingMethodSelector. Receives `page`, the `firstNameInput`
+    // anchor, and a bound callback to `BasePage.safeClickWithLabelFallback`
+    // (kept on the façade so the primitive's `force: true` calls stay
+    // owned by BasePage — delta net on `force: true` = 0). Behavior
+    // preserved 1:1.
+    this.shippingMethodSelector = new ShippingMethodSelector(
+      page,
+      this.firstNameInput,
+      (locator, options) => this.safeClickWithLabelFallback(locator, options)
+    );
   }
 
   /**
@@ -377,82 +390,9 @@ export class CheckoutShippingPage extends BasePage {
    * Uses name-based selector as primary (avoids dynamic IDs), then falls back to strategy
    */
   async selectFirstShippingMethod(): Promise<boolean> {
-    this.logStep('📝 Selecting shipping method');
-
-    // Click the shipping method label as specified by user to open the form.
-    // Example: label.shipping-method-option with for="shippingMethod-Standard-..."
-    const shippingLabel = this.page.locator('label.shipping-method-option').first();
-    let clicked = false;
-
-    try {
-      await shippingLabel.waitFor({ state: 'visible', timeout: TIMEOUTS.medium });
-      await shippingLabel.click({ timeout: TIMEOUTS.short });
-      clicked = true;
-      this.logSuccess('Shipping method label clicked (opened form)');
-    } catch (e) {
-      this.log(`Failed to click shipping label: ${e}`, 'warn');
-      // Fallbacks
-      const shippingByName = this.page.locator(SELECTORS.CHECKOUT.SHIPPING.SHIPPING_METHOD_BY_NAME).first();
-      try {
-        await shippingByName.waitFor({ state: 'attached', timeout: TIMEOUTS.short });
-        clicked = await this.safeClickWithLabelFallback(shippingByName, {
-          timeout: TIMEOUTS.short,
-        });
-      } catch (error) {
-        // Sprint 11: replace the historical `} catch {}` empty block. The
-        // fall-through to the later strategies (SHIPPING_METHOD_STRATEGY
-        // + radio + label force-click) is the invariant; this catch is
-        // purely fail-open. Log at `debug` with a static label + `error.name`
-        // (no `.message`, no PII).
-        this.log(
-          `Optional shipping method fallback skipped: shippingByName strategy (${this.errorName(error)})`,
-          'debug'
-        );
-      }
-
-      if (!clicked) {
-        const shippingInput = await SHIPPING_METHOD_STRATEGY.findFirst(this.page, {
-          timeout: TIMEOUTS.medium,
-        });
-
-        if (shippingInput) {
-          clicked = await this.safeClickWithLabelFallback(shippingInput, {
-            timeout: TIMEOUTS.short,
-          });
-        }
-      }
-
-      if (!clicked) {
-        const radio = this.page.locator('input[type="radio"][name*="shippingMethod"], input.shipping-method-selector').first();
-        if (await radio.isVisible({ timeout: 1500 }).catch(() => false)) {
-          await radio.click({ force: true }).catch(async () => {
-            await radio.evaluate((el: HTMLElement) => el.click()).catch(this.swallowOptional('shipping method radio JS click fallback'));
-          });
-          clicked = true;
-        } else {
-          const label = this.page.locator('label[for*="shippingMethod"], label:has(input[type="radio"])').first();
-          if (await label.isVisible({ timeout: 1500 }).catch(() => false)) {
-            await label.click({ force: true }).catch(async () => {
-              await label.evaluate((el: HTMLElement) => el.click()).catch(this.swallowOptional('shipping method label JS click fallback'));
-            });
-            clicked = true;
-          }
-        }
-      }
-    }
-
-    if (clicked) {
-      this.logSuccess('Shipping method selected');
-      this.logStep('📝 Waiting for address form to load');
-
-      await this.firstNameInput
-        .waitFor({ state: 'attached', timeout: TIMEOUTS.element })
-        .catch(() => this.log('Address form already visible', 'info'));
-    } else {
-      this.log('No shipping method found', 'warn');
-    }
-
-    return clicked;
+    // Sprint 18: full body extracted to `ShippingMethodSelector`. Public
+    // signature and return contract preserved 1:1.
+    return this.shippingMethodSelector.selectFirst();
   }
 
   /**
