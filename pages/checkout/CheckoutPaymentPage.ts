@@ -5,6 +5,7 @@ import { AdyenHelper } from '../../utils/adyenHelper';
 import { CybersourceHelper } from '../../utils/cybersourceHelper';
 import { TIMEOUTS } from '../../config/testConfig';
 import { PayPalPaymentFlow } from './payment/PayPalPaymentFlow';
+import { AfterpayPaymentFlow } from './payment/AfterpayPaymentFlow';
 
 /**
  * Payment information options
@@ -41,6 +42,7 @@ export class CheckoutPaymentPage extends BasePage {
   readonly orderNumber: Locator;
 
   private readonly payPalPaymentFlow: PayPalPaymentFlow;
+  private readonly afterpayPaymentFlow: AfterpayPaymentFlow;
 
   constructor(page: Page) {
     super(page, 'Payment');
@@ -66,6 +68,12 @@ export class CheckoutPaymentPage extends BasePage {
     // Terms handling stays on this façade (Cybersource + Adyen share the
     // same terms surface), so the flow receives it as a callback.
     this.payPalPaymentFlow = new PayPalPaymentFlow(page, () => this.acceptTermsAndConditions());
+
+    // Sprint 13 — Afterpay flow extracted to AfterpayPaymentFlow. Same
+    // Terms callback pattern as PayPal.
+    this.afterpayPaymentFlow = new AfterpayPaymentFlow(page, () =>
+      this.acceptTermsAndConditions()
+    );
   }
 
   /**
@@ -561,100 +569,14 @@ export class CheckoutPaymentPage extends BasePage {
    *   5. Afterpay redirects back to Celine Order-Confirm
    */
   async payViaAfterpay(email: string, password: string): Promise<void> {
-    this.logStep('📝 Initiating Afterpay payment flow');
-
-    // 1) Select Afterpay radio. Same pattern as PayPal — Celine's billing form drives
-    //    the Submit CTA via change-event listeners; click label + force radio + dispatch.
-    const afterpayLabel = this.page.locator('#lb_afterpaytouch').first();
-    const afterpayRadio = this.page.locator('#rb_afterpaytouch').first();
-
-    await afterpayLabel.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-    await afterpayLabel
-      .scrollIntoViewIfNeeded()
-      .catch(this.swallowOptional('Afterpay label scrollIntoView'));
-    // 2s wait for Celine's billing-form hydration before triggering the radio change.
-    await this.page.waitForTimeout(300);
-    await afterpayLabel.click().catch(this.swallowOptional('Afterpay label click'));
-
-    await afterpayRadio
-      .evaluate((el: HTMLInputElement) => {
-        if (!el.checked) el.checked = true;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      })
-      .catch(this.swallowOptional('Afterpay radio dispatch'));
-
-    if (!(await afterpayRadio.isChecked().catch(() => false))) {
-      throw new Error('Afterpay radio is not checked after click + dispatch');
-    }
-    this.logSuccess('Afterpay radio selected');
-
-    // 2) Accept terms & conditions
-    const termsOk = await this.acceptTermsAndConditions();
-    if (!termsOk) {
-      throw new Error('Terms checkbox could not be accepted before Afterpay submit');
-    }
-
-    // 3) Click the Adyen "Continue to Afterpay" CTA — same-tab navigation to Afterpay portal
-    const continueCta = this.page
-      .locator('button.adyen-checkout__button--pay', { hasText: /Continue to Afterpay/i })
-      .first();
-    await continueCta.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-    await Promise.all([
-      this.page.waitForURL(/afterpay/i, { timeout: TIMEOUTS.navigation }),
-      continueCta.click(),
-    ]);
-    this.logSuccess(`Redirected to Afterpay portal: ${this.page.url().slice(0, 100)}`);
-
-    // 4) Email step — wait for portal hydration, then handle both landing screens:
-    //    (a) fresh: email input visible directly
-    //    (b) saved session: "Welcome back!" with cached identity → click "Not you?"
-    //        to reset (cached identity often belongs to a different sandbox tester
-    //        and its password won't match ours)
-    await this.page
-      .waitForLoadState('domcontentloaded')
-      .catch(this.swallowOptional('Afterpay portal DOM settle'));
-
-    const emailInput = this.page.locator('[data-testid="login-identity-input"]').first();
-    const notYouBtn = this.page.getByRole('button', { name: /Not you/i }).first();
-
-    // Race the two possible landing screens until one becomes visible
-    await Promise.race([
-      emailInput.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation }),
-      notYouBtn.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation }),
-    ]).catch(this.swallowOptional('Afterpay landing screen race'));
-
-    if (!(await emailInput.isVisible({ timeout: 500 }).catch(() => false))) {
-      // Saved-session screen — reset identity
-      await notYouBtn.click();
-      this.log('Afterpay: clicked "Not you?" to reset cached identity', 'info');
-      await emailInput.waitFor({ state: 'visible', timeout: TIMEOUTS.element });
-    }
-
-    await emailInput.fill(email);
-    this.logSuccess('Afterpay email filled');
-    await this.page.locator('[data-testid="login-identity-button"]').first().click();
-
-    // 5) Password step
-    const passwordInput = this.page.locator('[data-testid="login-password-input"]').first();
-    await passwordInput.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation });
-    await passwordInput.fill(password);
-    this.logSuccess('Afterpay password filled');
-    await this.page.locator('[data-testid="login-password-button"]').first().click();
-
-    // 6) Summary → Confirm — Afterpay redirects back to Celine Order-Confirm on success.
-    //    We MUST wait for that redirect here, otherwise the test spec's permissive
-    //    URL check (`!stage=payment`) returns true while still on portal.sandbox.afterpay.com,
-    //    and the order-number regex matches stray UI text on the Afterpay page.
-    const confirmCta = this.page.locator('[data-testid="summary-button"]').first();
-    await confirmCta.waitFor({ state: 'visible', timeout: TIMEOUTS.navigation });
-    await Promise.all([
-      this.page.waitForURL(/celine\.com.*Order-Confirm/i, { timeout: TIMEOUTS.navigation }),
-      confirmCta.click(),
-    ]);
-    this.logSuccess(`Afterpay Confirm clicked — back on Celine: ${this.page.url().slice(0, 100)}`);
-
-    this.logSuccess('Afterpay flow completed');
+    // Sprint 13: full body extracted to `AfterpayPaymentFlow`. Public
+    // signature and return contract are preserved 1:1. Terms handling
+    // stays here (Cybersource + Adyen share the same terms surface) and
+    // is delegated back via the constructor-injected callback. The two
+    // URL logs also gained a pure-function `redactUrl` pass in the
+    // helper (origin + pathname only, no query params) — a non-functional
+    // security tightening authorized by the Sprint 13 prompt.
+    await this.afterpayPaymentFlow.pay(email, password);
   }
 
   /**
