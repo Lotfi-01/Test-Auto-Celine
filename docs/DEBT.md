@@ -342,14 +342,18 @@ replace with stable shipping signal.` dans le code** :
     `continueToPayment` — `closeAllSidePanels` avec `force: true` +
     exclude shippingBillingForms + pre-check `waitForURL` + 3
     stratégies détection payment : URL match / clic button + waitForURL /
-    visible DOM markers Adyen/Cybersource evaluate) → **444 → 398 lignes
-    (−46, −10 %)**. **Cumul Sprint 3+4+7+17+18+19+21+22 : ~1440 → 398
-    (−1042, −72 %).** L'API publique (`fillShippingAddress`,
-    `selectStateOrPrefecture`, `selectPhonePrefix`, `selectClickAndCollect`,
-    `selectFirstShippingMethod`, `enterPostalCode`, `continueToShipping`,
-    `continueToPayment`) reste sur la façade et délègue aux helpers.
-    La taille restante vient : (a) de `clickSubmitShipping` (~45 L),
-    (b) `swallowOptional` + `errorName` + `logStep` + orchestration.
+    visible DOM markers Adyen/Cybersource evaluate) → 444 → 398 lignes
+    (−46, −10 %). Sprint 23 : `ClickSubmitShippingHandler` extrait (bloc
+    `clickSubmitShipping` — `closeAllSidePanels` + waitFor attached +
+    scroll + `safeClick` avec `force: true` → JS click fallback +
+    domcontentloaded 1s cap) → **398 → 370 lignes (−28, −7 %)**.
+    **Cumul Sprint 3+4+7+17+18+19+21+22+23 : ~1440 → 370 (−1070, −74 %).**
+    L'API publique (`fillShippingAddress`, `selectStateOrPrefecture`,
+    `selectPhonePrefix`, `selectClickAndCollect`, `selectFirstShippingMethod`,
+    `enterPostalCode`, `continueToShipping`, `continueToPayment`,
+    `clickSubmitShipping`) reste sur la façade et délègue aux helpers.
+    La taille restante vient de `completeShippingStep` orchestrateur +
+    `swallowOptional` + `errorName` + `logStep` + init constructor.
 - `pages/checkout/shipping/PickupDialogHandler.ts` — Sprint 4 : nouveau
   helper 720 lignes. Sprint 5 : `PickupCivilityStrategy` extrait → 720 →
   614 lignes (−106). Sprint 6 : `PickupRefillGuard` extrait
@@ -501,6 +505,29 @@ replace with stable shipping signal.` dans le code** :
     Error, même failure mode). Delta net 0 sur les 4 primitives (1
     `force: true` inside `closeAllSidePanels` options + 1 `evaluate`
     déplacés 1:1 — 0 `waitForTimeout`, 0 `waitForFunction` dans le bloc).
+- `pages/checkout/shipping/ClickSubmitShippingHandler.ts` — **nouveau
+  (Sprint 23)** : 135 lignes. Contient uniquement la classe
+  `ClickSubmitShippingHandler` avec `click(): Promise<boolean>` public.
+  Corps déplacé 1:1 : `closeAllSidePanels` avec `force: true` + `waitFor`
+  attached (fail-open) + guard `count > 0` + `scrollIntoViewIfNeeded` +
+  `safeClick` avec `force: true` → JS `evaluate` click fallback +
+  `waitForLoadState('domcontentloaded')` avec 1 s cap. 3 chemins de
+  retour préservés (`false` si non attached / `clicked` après fallback
+  / `false` outer catch — jamais de throw). Constructor
+  `(deps: ClickSubmitShippingDeps)` : `page` + `submitShippingButton` +
+  callback `safeClick` bindé sur BasePage (pattern Sprint 18/19/21/22
+  étendu). Aucun import `CheckoutShippingPage` (pas de cycle). Imports
+  type-only via `import type` pour `Page`, `Locator`, `SafeClickOptions`.
+  `closeAllSidePanels` importé (static) depuis `utils/selectorStrategy`
+  — remplace l'import dynamique qui était dans la façade. Logger
+  `TestLogger.scoped('ClickSubmitShipping')`. Primitives locales
+  `swallowOptional` + `errorName` PII-safe. **Sécurité Sprint 23** :
+  le log outer catch `` `Failed to click submit shipping: ${(e as Error).message}` ``
+  (Playwright message pouvant contenir sélecteurs/URLs) est converti en
+  `` `${errorName(e)}` ``. Delta net 0 sur les 4 primitives (2
+  `force: true` — un dans `closeAllSidePanels` + un dans `safeClick` — +
+  1 `evaluate` JS click fallback déplacés 1:1 ; 0 `waitForTimeout`,
+  0 `waitForFunction`).
 - `pages/checkout/shipping/AddressFormFiller.ts` — **nouveau (Sprint 7)** :
   437 lignes. Contient `fillShippingAddress(options)` +
   `selectStateOrPrefecture(value?)` + `selectPhonePrefix(prefix)` +
@@ -686,14 +713,16 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 23 (backlog priorisé)
+## 10. Actions Sprint 24 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **Réduire `CheckoutShippingPage.ts` sous 350 L** (optionnel) — Sprint 22
-   a ramené à 398 L. Reste extractible : `clickSubmitShipping` (~45 L).
-   Extraction possible mais non urgente — la façade est désormais à
-   −72 % du max historique (~1440 L).
+1. **`CheckoutShippingPage.ts` à 370 L** (Sprint 23) — sous le seuil ~400 L.
+   Cumul −74 % du max historique (~1440 L). Aucune extraction résiduelle
+   claire : `completeShippingStep` est un orchestrateur pur qui appelle
+   les méthodes publiques déjà déléguées. Le reste est constructor + init
+   des 9 helpers extraits. Extraction supplémentaire non recommandée
+   sans changement fonctionnel.
 2. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
 3. **Split du mégatest** — découper `celine-purchase.spec.ts` en
