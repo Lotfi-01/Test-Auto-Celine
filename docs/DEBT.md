@@ -323,16 +323,19 @@ replace with stable shipping signal.` dans le code** :
   Sprint 7 : `AddressFormFiller` extrait (blocs `fillShippingAddress` +
   `fillField` + `fillOptionalField` + `ensureFormVisible` +
   `tryOpenFormToggle` + `selectStateOrPrefecture` + `selectPhonePrefix`)
-  → **944 → 751 lignes (−193, −20 %)**. **Sous le seuil `~800 lignes`.**
-  L'API publique (`fillShippingAddress`, `selectStateOrPrefecture`,
-  `selectPhonePrefix`) reste sur la façade et délègue au filler. La
-  taille restante vient : (a) de `enterPostalCode` + `clickOkButton`
+  → 944 → 751 lignes (−193, −20 %). Sprint 17 : `SelectClickAndCollectHelper`
+  extrait (bloc `selectClickAndCollect` avec 3 stratégies fallback tab
+  opening + verify + first store click + JS force-click) → **771 → 623
+  lignes (−148, −19 %)**. **Sous le seuil `~700 lignes` cible.**
+  **Cumul Sprint 3+4+7+17 : ~1440 → 623 (−817, −57 %).** L'API publique
+  (`fillShippingAddress`, `selectStateOrPrefecture`, `selectPhonePrefix`,
+  `selectClickAndCollect`) reste sur la façade et délègue aux helpers.
+  La taille restante vient : (a) de `enterPostalCode` + `clickOkButton`
   (~90 L), (b) de `continueToShipping` avec ses 2 `evaluate` scroll +
-  requestSubmit (~65 L), (c) de `selectClickAndCollect` avec ses 3
-  fallbacks pickup + JS click (~160 L), (d) de `selectFirstShippingMethod`
-  avec ses fallbacks radio/label (~70 L), (e) de `continueToPayment`
-  avec son evaluate() de visible payment markers (~65 L), (f) de
-  `clickSubmitShipping` (~45 L), (g) `swallowOptional` + orchestration.
+  requestSubmit (~65 L), (c) de `selectFirstShippingMethod` avec ses
+  fallbacks radio/label (~70 L), (d) de `continueToPayment` avec son
+  evaluate() de visible payment markers (~65 L), (e) de
+  `clickSubmitShipping` (~45 L), (f) `swallowOptional` + orchestration.
 - `pages/checkout/shipping/PickupDialogHandler.ts` — Sprint 4 : nouveau
   helper 720 lignes. Sprint 5 : `PickupCivilityStrategy` extrait → 720 →
   614 lignes (−106). Sprint 6 : `PickupRefillGuard` extrait
@@ -388,6 +391,20 @@ replace with stable shipping signal.` dans le code** :
   `'Last name'`, etc.) — jamais une valeur user. La `value` (raw user
   input) n'est jamais loguée : le success emet uniquement
   `` `${label} filled` ``.
+- `pages/checkout/shipping/SelectClickAndCollectHelper.ts` — **nouveau
+  (Sprint 17)** : 221 lignes. Contient uniquement la classe
+  `SelectClickAndCollectHelper` avec `select()` — 3 stratégies fallback
+  d'ouverture du pickup tab (mouse.move + click → alternative pickup
+  element with `force: true` → ultimate JS scan) + verify tab selected
+  (avec JS click+dispatch fallback) + first store label click + JS
+  force-click fallback + purchaser-info dialog wait. Constructor
+  `(page: Page)` — dépendance unique. Aucun import `CheckoutShippingPage`
+  (pas de cycle). Logger `TestLogger.scoped('ClickCollect')`. Primitives
+  locales `swallowOptional` + `errorName` PII-safe. **Sécurité
+  Sprint 17** : le throw `` `PICK-UP tab click failed: ${(err as Error).message}` ``
+  (Playwright message pouvant contenir sélecteurs/URLs) est converti en
+  `` `PICK-UP tab click failed: ${errorName(err)}` `` — même comportement
+  throw, chaîne PII-safe.
 - `pages/checkout/shipping/AddressFormFiller.ts` — **nouveau (Sprint 7)** :
   437 lignes. Contient `fillShippingAddress(options)` +
   `selectStateOrPrefecture(value?)` + `selectPhonePrefix(prefix)` +
@@ -573,38 +590,32 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 17 (backlog priorisé)
+## 10. Actions Sprint 18 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) —
-   Sprint 7 a ramené à 751 L (actuel 771 L). Reste extractible :
-   `SelectClickAndCollectHelper` (~160 L, ouverture panel Pickup avec 3
-   fallbacks) et éventuellement `ShippingMethodSelector` (~70 L). Non
-   prioritaire car déjà sous le seuil 800.
-2. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
-   a ramené à 751 L. Reste extractible : `SelectClickAndCollectHelper`
-   (~160 L couvrant l'ouverture du panel pickup avec ses 3 fallbacks) et
-   éventuellement `ShippingMethodSelector` (~70 L). Non prioritaire car
-   déjà sous le seuil 800.
-3. **`storageState` par région** — global-setup persistant pour supprimer
+1. **`ShippingMethodSelector` extraction** (optionnel) — Sprint 17 a
+   ramené `CheckoutShippingPage.ts` à 623 L, sous le seuil 700.
+   `selectFirstShippingMethod` (~70 L avec fallbacks radio/label) reste
+   extractible pour ramener la façade sous ~550 L. Non urgent.
+2. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
-4. **Split du mégatest** — découper `celine-purchase.spec.ts` en
+3. **Split du mégatest** — découper `celine-purchase.spec.ts` en
    `product.spec.ts`, `checkout-login.spec.ts`, `checkout-shipping.spec.ts`,
    `checkout-payment.spec.ts`, `checkout-confirmation.spec.ts`.
-5. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
+4. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
    remplacer par des signaux réels maintenant que le scope pickup est
    entièrement scindé en trois helpers ciblés (handler, civility, refill
    guard) et que le scope adresse est isolé dans `AddressFormFiller`.
    Chaque sleep a désormais un contexte local suffisamment étroit pour
    identifier un signal DOM/URL fiable.
-6. **Flakes `tests/unit/fileLock.spec.ts:114` et
+5. **Flakes `tests/unit/fileLock.spec.ts:114` et
    `tests/unit/testResultTracker.spec.ts:66`** — deux tests
    cross-process (`cross-process contention preserves all writes` et
    `cross-process concurrent record() preserves all entries`) échouent
    occasionnellement (~10-20 %). Race probable dans le `child_process`
    spawn — même famille. À investiguer isolément.
-7. **Warnings ESLint révélés post-Sprint 11** — la suppression de
+6. **Warnings ESLint révélés post-Sprint 11** — la suppression de
    l'override rend visibles quelques warnings préexistants qui étaient
    masqués : `preserve-caught-error` sur `CheckoutShippingPage.ts:415` et
    `celine-purchase.spec.ts:202`, `no-useless-assignment` sur
@@ -613,22 +624,22 @@ Priorité décroissante :
    du mégatest (§5) et le refactor Payment (§1). Idem : nettoyer
    l'`unused-disable` sur `scripts/check-silent-catch-baseline.js:2` et
    les 2 `no-explicit-any` sur `emailReporter.ts:479` + `formHelper.ts:400`.
-8. **Warning tsc pré-existant `_buyNowUsed` dans
+7. **Warning tsc pré-existant `_buyNowUsed` dans
    `tests/celine-purchase.spec.ts`** — la variable est assignée mais
    jamais lue post-assignation (héritage historique). L'ESLint
    `varsIgnorePattern: '^_'` la tolère ; `tsc --noEmit` la signale en
    diagnostic informationnel mais ne fail pas. À nettoyer au fil du
    split du mégatest (§5).
-9. **Duplication `safeClick`/`safeFill`/`safeSelect`/`isVisible`** —
+8. **Duplication `safeClick`/`safeFill`/`safeSelect`/`isVisible`** —
    `AddressFormFiller` réimplémente localement les primitives BasePage
    (Sprint 7). À reconsidérer si un pattern de partage émerge côté
    Payment/Login helpers ; sinon, laisser les duplications comme prix
    de l'isolation forte.
-10. **`swallowOptional` historique dans `CheckoutShippingPage.ts`** —
-    encore basé sur `.message` / `String(err)`. Non touché en Sprint 11
-    (hors périmètre — utilisé par ~15 sites). À migrer vers `errorName`
-    au fil du prochain refactor structurel de la façade.
-11. **Historique Git** — purger `.claude/settings.local.json` et
+9. **`swallowOptional` historique dans `CheckoutShippingPage.ts`** —
+   encore basé sur `.message` / `String(err)`. Non touché en Sprint 11
+   (hors périmètre — utilisé par ~15 sites). À migrer vers `errorName`
+   au fil du prochain refactor structurel de la façade.
+10. **Historique Git** — purger `.claude/settings.local.json` et
     `%TEMP%install-qwen.bat` (voir §9), après validation humaine.
 
 ---
