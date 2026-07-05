@@ -9,6 +9,7 @@ import { SelectClickAndCollectHelper } from './shipping/SelectClickAndCollectHel
 import { ShippingMethodSelector } from './shipping/ShippingMethodSelector';
 import { ShippingPostalCodeHandler } from './shipping/ShippingPostalCodeHandler';
 import { ContinueToShippingHandler } from './shipping/ContinueToShippingHandler';
+import { ContinueToPaymentHandler } from './shipping/ContinueToPaymentHandler';
 
 /**
  * Re-export the address-options interface from its Sprint-7 home so any
@@ -51,6 +52,7 @@ export class CheckoutShippingPage extends BasePage {
   private readonly shippingMethodSelector: ShippingMethodSelector;
   private readonly shippingPostalCodeHandler: ShippingPostalCodeHandler;
   private readonly continueToShippingHandler: ContinueToShippingHandler;
+  private readonly continueToPaymentHandler: ContinueToPaymentHandler;
 
   constructor(page: Page) {
     super(page, 'Shipping');
@@ -136,6 +138,17 @@ export class CheckoutShippingPage extends BasePage {
       validateAddressButton: this.validateAddressButton,
       continueToPaymentButton: this.continueToPaymentButton,
       safeClick: (locator, options) => this.safeClick(locator, options),
+    });
+
+    // Sprint 22 — Continue-to-payment transition extracted to
+    // `ContinueToPaymentHandler`. Receives `page`, the anchor
+    // `continueToPaymentButton`, and 2 bound BasePage callbacks
+    // (`safeClick`, `isVisible`). Behavior preserved 1:1.
+    this.continueToPaymentHandler = new ContinueToPaymentHandler({
+      page,
+      continueToPaymentButton: this.continueToPaymentButton,
+      safeClick: (locator, options) => this.safeClick(locator, options),
+      isVisible: (locator, timeout) => this.isVisible(locator, timeout),
     });
   }
 
@@ -291,69 +304,10 @@ export class CheckoutShippingPage extends BasePage {
    * Note: After address validation, the page may auto-navigate to payment
    */
   async continueToPayment(): Promise<boolean> {
-    await this.page.waitForLoadState('domcontentloaded');
-
-    // Close any remaining panels before attempting to move to payment.
-    // Exclude shippingBillingForms (we may have just submitted it) and be conservative on payment page.
-    const { closeAllSidePanels } = await import('../../utils/selectorStrategy');
-    await closeAllSidePanels(this.page, { timeout: 50, force: true, exclude: ['shippingBillingForms'] });
-
-    // Wait up to navigation timeout for the URL to change. The address submit can take
-    // 10-15s on slow regions (JP) before the URL flips to /payment.
-    await this.page.waitForURL(/payment|paiement/, { timeout: TIMEOUTS.navigation })
-      .catch(this.swallowOptional('waitForURL /payment (pre-check)'));
-
-    // 1) URL on payment? Done.
-    const currentUrl = this.page.url();
-    if (currentUrl.includes('payment') || currentUrl.includes('paiement')) {
-      this.logSuccess('Already on payment section (URL-based check)');
-      return true;
-    }
-
-    // 2) Click the explicit Continue-to-payment button if it's visible.
-    const buttonVisible = await this.isVisible(this.continueToPaymentButton, TIMEOUTS.short);
-    if (buttonVisible) {
-      const clicked = await this.safeClick(this.continueToPaymentButton, { timeout: TIMEOUTS.short });
-      if (clicked) {
-        this.logSuccess('Continued to payment (clicked button)');
-        await this.page.waitForURL(/payment|paiement/, { timeout: TIMEOUTS.navigation })
-          .catch(this.swallowOptional('waitForURL /payment (post-continue click)'));
-        return true;
-      }
-    }
-
-    // 3) Verify by DOM that the payment STEP is actually rendered. Use VISIBLE markers only —
-    //    hidden pre-loaded payment iframes/markers on the delivery page would otherwise
-    //    false-positive and we'd march into payment fill on a stale page.
-    const onPaymentByDom = await this.page
-      .evaluate(() => {
-        const isVisible = (el: Element | null) => {
-          if (!el) return false;
-          const cs = window.getComputedStyle(el as HTMLElement);
-          if (cs.display === 'none' || cs.visibility === 'hidden') return false;
-          return (el as HTMLElement).offsetParent !== null;
-        };
-        // Strict markers — must be visible to count
-        const visibleMarkers = [
-          '#rb_scheme', // Adyen credit card radio
-          'label[for="rb_scheme"]', // Adyen credit card label
-          'iframe[src*="adyen"]:not([style*="display: none"])',
-          'iframe[src*="cybersource"]:not([style*="display: none"])',
-        ];
-        return visibleMarkers.some((sel) => {
-          const el = document.querySelector(sel);
-          return isVisible(el);
-        });
-      })
-      .catch(() => false);
-    if (onPaymentByDom) {
-      this.logSuccess('Already on payment section (visible DOM marker check)');
-      return true;
-    }
-
-    // 4) Stuck — surface a clear error so the failure mode is obvious.
-    const finalUrl = this.page.url();
-    throw new Error(`Failed to reach payment step — still at ${finalUrl}`);
+    // Sprint 22: full body extracted to `ContinueToPaymentHandler`.
+    // Public signature and return contract preserved 1:1 (Promise<boolean>,
+    // 3 truthy paths, throws when payment is not detected).
+    return this.continueToPaymentHandler.continue();
   }
 
   /**
