@@ -1,6 +1,7 @@
 import { Page } from '@playwright/test';
 import { TIMEOUTS } from '../../../config/testConfig';
 import { TestLogger } from '../../../utils/logger';
+import { redactUrl } from './urlRedaction';
 
 /**
  * Sprint 13 — extracted from `CheckoutPaymentPage.payViaAfterpay`. Behavior
@@ -57,23 +58,6 @@ function swallowOptional(label: string): (err: unknown) => void {
   return (err) => {
     scopedLogger.debug(`Optional Afterpay step failed: ${label} (${errorName(err)})`);
   };
-}
-
-/**
- * Sprint 13 — non-functional URL redaction for log emissions.
- * Returns `origin + pathname` only; query params and fragments are
- * stripped so Afterpay portal session tokens and Celine
- * order-confirm identifiers never reach the log stream.
- *
- * Pure function — safe to unit-test in isolation.
- */
-export function redactUrl(rawUrl: string): string {
-  try {
-    const u = new URL(rawUrl);
-    return `${u.origin}${u.pathname}`;
-  } catch {
-    return '<invalid-url>';
-  }
 }
 
 export class AfterpayPaymentFlow {

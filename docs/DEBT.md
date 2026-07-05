@@ -376,13 +376,18 @@ replace with stable shipping signal.` dans le code** :
   (`payViaPayPal(email, password)` public préservé, corps déplacé 1:1)
   → 913 → 782 lignes (−131, −14 %). Sprint 13 : `AfterpayPaymentFlow`
   extrait (`payViaAfterpay(email, password)` public préservé, corps
-  déplacé 1:1) → **782 → 704 lignes (−78, −10 %)**. **Cumul Sprint
-  12+13 : 913 → 704 (−209, −23 %).** L'API publique reste intacte ; la
-  façade instancie les 2 flows au constructor et délègue via
-  `this.payPalPaymentFlow.pay(...)` / `this.afterpayPaymentFlow.pay(...)`.
-  Aucun helper n'importe `CheckoutPaymentPage` (callback pour Terms,
-  aucun cycle). Reste extractible : `PaymentTermsHandler`
-  (`acceptTermsAndConditions`, ~55 L). Non prioritaire.
+  déplacé 1:1) → 782 → 704 lignes (−78, −10 %). Sprint 14 :
+  `PaymentTermsHandler` extrait (bloc `acceptTermsAndConditions`, ~50 L,
+  corps déplacé 1:1) → **704 → 671 lignes (−33, −5 %)**. **Cumul Sprint
+  12+13+14 : 913 → 671 (−242, −27 %).** L'API publique reste intacte ;
+  la façade instancie les 3 helpers au constructor
+  (`PaymentTermsHandler` en premier, avant PayPal/Afterpay pour que
+  leurs callbacks Terms résolvent correctement) et délègue
+  `acceptTermsAndConditions()` (méthode privée) via
+  `this.paymentTermsHandler.accept()`. Aucun helper n'importe
+  `CheckoutPaymentPage` (constructor deps minimales). Reste extractible
+  (non prioritaire) : découpage éventuel du bloc CB / Adyen /
+  Cybersource, mais Sprint 12-14 a déjà retiré 27 % de la façade.
 - `pages/checkout/payment/PayPalPaymentFlow.ts` — **nouveau (Sprint 12)** :
   225 lignes. Flow PayPal complet : select radio + accept terms
   (callback) + polling CTA multi-frame + popup arm/click + login
@@ -395,23 +400,40 @@ replace with stable shipping signal.` dans le code** :
   `errorName(err)` PII-safe (pattern Sprint 8). Aucun catch silencieux ;
   chaque catch loggue au moins un label technique + `error.name`.
 - `pages/checkout/payment/AfterpayPaymentFlow.ts` — **nouveau (Sprint 13)** :
-  197 lignes. Flow Afterpay complet : select radio + accept terms
+  Sprint 13 : 197 lignes avec `redactUrl` local exporté. **Sprint 14 :
+  181 lignes** — le `redactUrl` local (~15 L incluant JSDoc) est déplacé
+  vers le module partagé `urlRedaction.ts` et importé. Comportement
+  runtime préservé. Flow Afterpay complet : select radio + accept terms
   (callback) + Continue-to-Afterpay CTA + full-page nav portal +
   landing-screen race (fresh vs saved-session "Not you?") + email +
   password + Confirm → retour Celine Order-Confirm. Aucun import
   `CheckoutPaymentPage` ; dépendances via constructor
   (`page: Page`, `acceptTerms: () => Promise<boolean>`) — identique à
-  PayPal. Logs via `TestLogger.scoped('Afterpay')`. Primitives locales
-  `swallowOptional(label)` + `errorName(err)` PII-safe. **Sécurité
-  Sprint 13** : les 2 logs URL du bloc (`Redirected to Afterpay portal:
-${url}` et `Afterpay Confirm clicked — back on Celine: ${url}`)
-  utilisaient `.slice(0, 100)` en pré-Sprint-13 — truncation faible
-  pouvant leaker session tokens portal ou order-confirm identifiers.
-  Sprint 13 remplace par `redactUrl(page.url())` : fonction pure
-  exportée qui parse via `new URL()` et retourne uniquement
-  `origin + pathname` (aucun query, aucun fragment). Redaction
-  non-fonctionnelle autorisée par le prompt Sprint 13. Comportement
-  runtime préservé — seule la chaîne loggée change.
+  PayPal. Logs via `TestLogger.scoped('Afterpay')`. Les 2 logs URL
+  utilisent `redactUrl(page.url())` (Sprint 13 + partagé Sprint 14).
+- `pages/checkout/payment/urlRedaction.ts` — **nouveau (Sprint 14)** :
+  30 lignes. Fonction pure `redactUrl(rawUrl)` déplacée depuis
+  `AfterpayPaymentFlow` et partagée avec `PayPalPaymentFlow`. Parse
+  via `new URL()`, retourne uniquement `origin + pathname`, aucun query,
+  aucun fragment. Aucun log, aucune dépendance Playwright. Testée dans
+  `tests/unit/urlRedaction.spec.ts` (renommé depuis
+  `tests/unit/AfterpayPaymentFlow.spec.ts` via `git mv` — 2 tests
+  couvrant strip query+hash + fallback URL invalide). PII-safe : le
+  pathname n'est pas redacté ; documentation intégrée précise que si un
+  PSP embed un token/session id directement dans le path (non observé
+  sur Adyen/Cybersource/PayPal/Afterpay actuels), il faudrait étendre
+  ce fichier avec un `redactPath`.
+- `pages/checkout/payment/PaymentTermsHandler.ts` — **nouveau
+  (Sprint 14)** : 139 lignes. Contient uniquement `accept()` :
+  3-strategy fallback (safeCheck → label click → JS dispatch) sur
+  le checkbox Terms — corps déplacé 1:1 depuis
+  `CheckoutPaymentPage.acceptTermsAndConditions`. Aucun import
+  `CheckoutPaymentPage` ; dépendance unique `page: Page`.
+  Réimplémentation locale de `safeCheck` (pattern Sprint 7
+  `AddressFormFiller`). Le catch outer précédemment
+  `(error as Error).message` est converti en `errorName(error)`
+  PII-safe (règle Sprint 6/7/8 pour les nouveaux fichiers). Logger
+  `TestLogger.scoped('PaymentTerms')`.
 - `utils/emailReporter.ts` — 630 lignes → séparer template HTML / SMTP transport.
 - `tests/celine-purchase.spec.ts` — 507 lignes → splitter en 4-5 specs ciblés.
 
@@ -518,52 +540,42 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 14 (backlog priorisé)
+## 10. Actions Sprint 15 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **`PaymentTermsHandler` extraction** (optionnel) — Sprint 13 a extrait
-   Afterpay (façade 782 → 704 L). `acceptTermsAndConditions` (~55 L)
-   reste partagé entre CC / PayPal / Afterpay via callback. Extraction
-   pourrait déduplifier les 2 callbacks passés à PayPal et Afterpay
-   flows (dépendance directe au lieu de callback via façade). À
-   évaluer : le gain (−55 L côté façade + réutilisation directe) vs
-   le coût (nouveau helper avec dépendances multiples). Non urgent car
-   la façade est déjà à 704 L, sous ~750 L.
-2. **Durcir les logs URL du PayPal helper** — Sprint 13 a introduit
-   `redactUrl(rawUrl)` dans `AfterpayPaymentFlow` (parse `new URL()`,
-   retourne uniquement `origin + pathname`). Le PayPal helper (Sprint 12)
-   utilise encore `.slice(0, 100)` sur `popup.url()` et `frame.url()`
-   (potentiel leak de query params PayPal SDK). Sprint 14 peut extraire
-   `redactUrl` dans `pages/checkout/payment/urlRedaction.ts` (fonction
-   pure exportable + spec unitaire) et migrer les 2 sites PayPal.
-3. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
+1. **`PickupStateSelector` extraction** — Sprint 6 a ramené le handler
+   Pickup à 485 lignes. `selectStateInDialog` (~65 L, `page.evaluate` de
+   state search) reste extractible. Priorité relevée après Sprint 14
+   car le chantier Payment est désormais bien avancé (façade Payment
+   à 671 L, 27 % de réduction cumulée depuis Sprint 11).
+2. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
    à 485 lignes, sous le seuil. L'extraction de `selectStateInDialog`
    (~65 L, `page.evaluate` de state search) reste possible si l'on
    souhaite gagner ~13 % supplémentaires, mais n'est plus prioritaire.
-4. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
+3. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
    a ramené à 751 L. Reste extractible : `SelectClickAndCollectHelper`
    (~160 L couvrant l'ouverture du panel pickup avec ses 3 fallbacks) et
    éventuellement `ShippingMethodSelector` (~70 L). Non prioritaire car
    déjà sous le seuil 800.
-5. **`storageState` par région** — global-setup persistant pour supprimer
+4. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
-6. **Split du mégatest** — découper `celine-purchase.spec.ts` en
+5. **Split du mégatest** — découper `celine-purchase.spec.ts` en
    `product.spec.ts`, `checkout-login.spec.ts`, `checkout-shipping.spec.ts`,
    `checkout-payment.spec.ts`, `checkout-confirmation.spec.ts`.
-7. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
+6. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
    remplacer par des signaux réels maintenant que le scope pickup est
    entièrement scindé en trois helpers ciblés (handler, civility, refill
    guard) et que le scope adresse est isolé dans `AddressFormFiller`.
    Chaque sleep a désormais un contexte local suffisamment étroit pour
    identifier un signal DOM/URL fiable.
-8. **Flakes `tests/unit/fileLock.spec.ts:114` et
+7. **Flakes `tests/unit/fileLock.spec.ts:114` et
    `tests/unit/testResultTracker.spec.ts:66`** — deux tests
    cross-process (`cross-process contention preserves all writes` et
    `cross-process concurrent record() preserves all entries`) échouent
    occasionnellement (~10-20 %). Race probable dans le `child_process`
    spawn — même famille. À investiguer isolément.
-9. **Warnings ESLint révélés post-Sprint 11** — la suppression de
+8. **Warnings ESLint révélés post-Sprint 11** — la suppression de
    l'override rend visibles quelques warnings préexistants qui étaient
    masqués : `preserve-caught-error` sur `CheckoutShippingPage.ts:415` et
    `celine-purchase.spec.ts:202`, `no-useless-assignment` sur
@@ -572,22 +584,22 @@ Priorité décroissante :
    du mégatest (§5) et le refactor Payment (§1). Idem : nettoyer
    l'`unused-disable` sur `scripts/check-silent-catch-baseline.js:2` et
    les 2 `no-explicit-any` sur `emailReporter.ts:479` + `formHelper.ts:400`.
-10. **Warning tsc pré-existant `_buyNowUsed` dans
-    `tests/celine-purchase.spec.ts`** — la variable est assignée mais
-    jamais lue post-assignation (héritage historique). L'ESLint
-    `varsIgnorePattern: '^_'` la tolère ; `tsc --noEmit` la signale en
-    diagnostic informationnel mais ne fail pas. À nettoyer au fil du
-    split du mégatest (§5).
-11. **Duplication `safeClick`/`safeFill`/`safeSelect`/`isVisible`** —
+9. **Warning tsc pré-existant `_buyNowUsed` dans
+   `tests/celine-purchase.spec.ts`** — la variable est assignée mais
+   jamais lue post-assignation (héritage historique). L'ESLint
+   `varsIgnorePattern: '^_'` la tolère ; `tsc --noEmit` la signale en
+   diagnostic informationnel mais ne fail pas. À nettoyer au fil du
+   split du mégatest (§5).
+10. **Duplication `safeClick`/`safeFill`/`safeSelect`/`isVisible`** —
     `AddressFormFiller` réimplémente localement les primitives BasePage
     (Sprint 7). À reconsidérer si un pattern de partage émerge côté
     Payment/Login helpers ; sinon, laisser les duplications comme prix
     de l'isolation forte.
-12. **`swallowOptional` historique dans `CheckoutShippingPage.ts`** —
+11. **`swallowOptional` historique dans `CheckoutShippingPage.ts`** —
     encore basé sur `.message` / `String(err)`. Non touché en Sprint 11
     (hors périmètre — utilisé par ~15 sites). À migrer vers `errorName`
     au fil du prochain refactor structurel de la façade.
-13. **Historique Git** — purger `.claude/settings.local.json` et
+12. **Historique Git** — purger `.claude/settings.local.json` et
     `%TEMP%install-qwen.bat` (voir §9), après validation humaine.
 
 ---
