@@ -339,15 +339,16 @@ Running optimized test for region: ${testInfo.project.name}`);
           // after the postal code lookup: either the delivery-method label
           // appears, or the shipping form panel becomes attached. Replaces the
           // 1s blind waitForTimeout previously used to soak JP/NL latency.
+          // Sprint 11: replace the historical `.catch(() => { comment })`.
+          // Both signals timing out is fine — the fallback path below
+          // (form-open attempt + fillShippingAddress) handles this case
+          // and will log. Same fail-open semantics via the Sprint 9 helper.
           await Promise.race([
             page.locator('label.shipping-method-option').first().waitFor({ state: 'visible', timeout: 8000 }),
             page
               .locator('section[data-osidepanel-name="shippingBillingForms"]')
               .waitFor({ state: 'attached', timeout: 8000 }),
-          ]).catch(() => {
-            /* both signals timed out — the fallback path below (form-open
-               attempt + fillShippingAddress) handles this case and will log. */
-          });
+          ]).catch(ignoreOptionalE2EError('shipping method race timeout'));
 
           // Robust open for shipping form (handles cases where label is hidden or slow to appear, e.g. JP)
           const formPanel = page.locator('section[data-osidepanel-name="shippingBillingForms"]');
