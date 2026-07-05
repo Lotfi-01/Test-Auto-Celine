@@ -1,6 +1,7 @@
 import { Page, Locator } from '@playwright/test';
 import { TIMEOUTS } from '../../../config/testConfig';
 import { TestLogger } from '../../../utils/logger';
+import { redactUrl } from './urlRedaction';
 
 /**
  * Sprint 12 — extracted from `CheckoutPaymentPage.payViaPayPal`. Behavior
@@ -146,7 +147,10 @@ export class PayPalPaymentFlow {
         const frameBtn = frame.locator(ctaSelector).first();
         if (await frameBtn.isVisible({ timeout: 250 }).catch(() => false)) {
           paypalCta = frameBtn;
-          scopedLogger.info(`PayPal CTA found in iframe: ${frame.url().slice(0, 80)}`);
+          // Sprint 14: switched from `.slice(0, 80)` truncation to
+          // `redactUrl(...)` — strips query params + fragments (PayPal SDK
+          // frame URLs carry EC-token / merchant-id in the query string).
+          scopedLogger.info(`PayPal CTA found in iframe: ${redactUrl(frame.url())}`);
           break;
         }
       }
@@ -169,7 +173,10 @@ export class PayPalPaymentFlow {
 
     const popup = await popupPromise;
     await popup.waitForLoadState('domcontentloaded');
-    scopedLogger.info(`PayPal popup opened: ${popup.url().slice(0, 100)}`);
+    // Sprint 14: switched from `.slice(0, 100)` truncation to
+    // `redactUrl(...)` — PayPal login popup URLs carry checkout session
+    // tokens (`?token=EC-...`) that must never reach the log stream.
+    scopedLogger.info(`PayPal popup opened: ${redactUrl(popup.url())}`);
 
     // 4) Email step — may be pre-filled by sandbox autofill
     const emailInput = popup.locator('input#email[name="login_email"]').first();

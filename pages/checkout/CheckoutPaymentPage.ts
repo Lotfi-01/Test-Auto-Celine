@@ -6,6 +6,7 @@ import { CybersourceHelper } from '../../utils/cybersourceHelper';
 import { TIMEOUTS } from '../../config/testConfig';
 import { PayPalPaymentFlow } from './payment/PayPalPaymentFlow';
 import { AfterpayPaymentFlow } from './payment/AfterpayPaymentFlow';
+import { PaymentTermsHandler } from './payment/PaymentTermsHandler';
 
 /**
  * Payment information options
@@ -43,6 +44,7 @@ export class CheckoutPaymentPage extends BasePage {
 
   private readonly payPalPaymentFlow: PayPalPaymentFlow;
   private readonly afterpayPaymentFlow: AfterpayPaymentFlow;
+  private readonly paymentTermsHandler: PaymentTermsHandler;
 
   constructor(page: Page) {
     super(page, 'Payment');
@@ -63,6 +65,12 @@ export class CheckoutPaymentPage extends BasePage {
     // Confirmation
     this.confirmationMessage = page.locator(SELECTORS.CHECKOUT.CONFIRMATION.TITLE).first();
     this.orderNumber = page.locator(SELECTORS.CHECKOUT.CONFIRMATION.ORDER_NUMBER).first();
+
+    // Sprint 14 — Terms handling extracted to PaymentTermsHandler.
+    // Must be constructed BEFORE the PayPal / Afterpay flows because their
+    // Terms callbacks delegate through `acceptTermsAndConditions()` below,
+    // which now routes through this handler.
+    this.paymentTermsHandler = new PaymentTermsHandler(page);
 
     // Sprint 12 — PayPal flow extracted to PayPalPaymentFlow. The shared
     // Terms handling stays on this façade (Cybersource + Adyen share the
@@ -429,57 +437,16 @@ export class CheckoutPaymentPage extends BasePage {
   }
 
   /**
-   * Accept terms and conditions
+   * Accept terms and conditions.
+   *
+   * Sprint 14: full body extracted to `PaymentTermsHandler`. Kept as a
+   * `private` façade method so the 3 existing internal callers
+   * (`fillPaymentInfo`, `fillPaymentInfoCybersource`, and the PayPal /
+   * Afterpay flow callbacks wired at constructor time) keep the same
+   * call site.
    */
   private async acceptTermsAndConditions(): Promise<boolean> {
-    const termsCheckbox = this.page.locator(SELECTORS.CHECKOUT.PAYMENT.TERMS_CHECKBOX).first();
-
-    try {
-      await termsCheckbox.waitFor({ state: 'attached', timeout: TIMEOUTS.element });
-
-      // 1) Try the standard force-check
-      await this.safeCheck(termsCheckbox, { force: true }).catch(
-        this.swallowOptional('Terms checkbox force-check')
-      );
-      if (await termsCheckbox.isChecked().catch(() => false)) {
-        this.logSuccess('Terms & conditions accepted');
-        return true;
-      }
-
-      // 2) Fallback: click the linked label (Celine renders the visible control as <label>)
-      const id = await termsCheckbox.getAttribute('id').catch(() => null);
-      if (id) {
-        const escapedId = id.replace(/\./g, '\\.');
-        const label = this.page.locator(`label[for="${escapedId}"]`).first();
-        await label
-          .click({ force: true, timeout: TIMEOUTS.short })
-          .catch(this.swallowOptional('Terms label click fallback'));
-        if (await termsCheckbox.isChecked().catch(() => false)) {
-          this.logSuccess('Terms & conditions accepted (via label)');
-          return true;
-        }
-      }
-
-      // 3) Last resort: set checked + dispatch change event in the DOM
-      await termsCheckbox
-        .evaluate((el) => {
-          const input = el as HTMLInputElement;
-          input.checked = true;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-        })
-        .catch(this.swallowOptional('Terms JS dispatch fallback'));
-      if (await termsCheckbox.isChecked().catch(() => false)) {
-        this.logSuccess('Terms & conditions accepted (via JS dispatch)');
-        return true;
-      }
-
-      this.log('Terms checkbox could not be checked by any method', 'warn');
-      return false;
-    } catch (error) {
-      this.log(`Terms checkbox not found or error: ${(error as Error).message}`, 'warn');
-      return false;
-    }
+    return this.paymentTermsHandler.accept();
   }
 
   /**
