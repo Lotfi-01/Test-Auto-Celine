@@ -336,14 +336,19 @@ replace with stable shipping signal.` dans le code** :
 - `pages/checkout/shipping/PickupDialogHandler.ts` — Sprint 4 : nouveau
   helper 720 lignes. Sprint 5 : `PickupCivilityStrategy` extrait → 720 →
   614 lignes (−106). Sprint 6 : `PickupRefillGuard` extrait
-  (bloc `ensureFieldsBeforeSubmit`) → **614 → 485 lignes (−129, −21 %)**.
-  **Sous le seuil `~500 lignes`.** La taille restante vient : (a) du full
-  state-label map US+AU (`pickupStateLabelFor`, ~20 L de map), (b) de
-  `selectStateInDialog` avec son `page.evaluate` de state search
-  (~65 L), (c) de `fillByLabelInDialog` avec ses 2 stratégies + retries
-  (~75 L), (d) des commentaires PII-safety Sprint 4.
-  Sprint 7 (optionnel) : extraire `PickupStateSelector` (~65 L) pour
-  gagner ~13 % supplémentaires si nécessaire.
+  (bloc `ensureFieldsBeforeSubmit`) → 614 → 485 lignes (−129, −21 %).
+  Sprint 15 : `PickupStateSelector` extrait (bloc `selectStateInDialog`
+  - `STATE_LABEL_MAP` + `pickupStateLabelFor`) → **485 → 406 lignes
+    (−79, −16 %)**. **Cumul Sprint 5+6+15 : 720 → 406 (−314, −44 %).**
+    `selectStateInDialog` reste une méthode privée façade qui délègue à
+    `this.pickupStateSelector.select(state, dialog)`. `pickupStateLabelFor`
+    est re-exporté depuis le handler pour préserver l'import du spec
+    unitaire existant (`tests/unit/PickupDialogHandler.spec.ts`) — aucune
+    modification de test requise. La taille restante vient : (a) de
+    `fillByLabelInDialog` avec ses 2 stratégies + retries (~75 L),
+    (b) des commentaires PII-safety Sprint 4, (c) des méthodes de
+    remplissage restantes (`fillTextFields`, `fillKatakanaFields`,
+    `fillPhoneFields`, `submitDialog`).
 - `pages/checkout/shipping/PickupCivilityStrategy.ts` — **nouveau (Sprint 5)** :
   164 lignes. 3 stratégies A/B/C intra-dialog + fallback D vers
   `CivilitySelector`. Réutilise `civilityTokens` — pas de duplication.
@@ -355,6 +360,19 @@ replace with stable shipping signal.` dans le code** :
   cycle). L'outer catch de `ensureFields` est un `debug`-log PII-safe
   (`error.name` uniquement) — conversion 1:1 de l'empty catch originel
   pour rester hors de l'override `HISTORICAL_SILENT_CATCH_FILES`.
+- `pages/checkout/shipping/PickupStateSelector.ts` — **nouveau
+  (Sprint 15)** : 189 lignes. Contient `STATE_LABEL_MAP` + fonction
+  pure `pickupStateLabelFor(state)` + classe `PickupStateSelector` avec
+  `select(state, dialog)`. Constructor `(page: Page)` — dépendance
+  unique. Aucun import `PickupDialogHandler` (pas de cycle). Logger
+  `TestLogger.scoped('PickupState')`. Primitives locales
+  `swallowOptional` + `errorName` PII-safe. **Sécurité Sprint 15** :
+  les 2 logs précédemment `State selected first: ${state}` et
+  `Could not select state: ${state}` (raw region code, considéré
+  form-value par la PII policy) sont neutralisés en labels statiques
+  — même pattern que Sprint 7 hotfix 2 pour
+  `AddressFormFiller.selectStateOrPrefecture`. Comportement runtime
+  strictement 1:1.
 - `pages/checkout/shipping/AddressFormFiller.ts` — **nouveau (Sprint 7)** :
   437 lignes. Contient `fillShippingAddress(options)` +
   `selectStateOrPrefecture(value?)` + `selectPhonePrefix(prefix)` +
@@ -540,42 +558,38 @@ git push --force-with-lease origin main
 
 ---
 
-## 10. Actions Sprint 15 (backlog priorisé)
+## 10. Actions Sprint 16 (backlog priorisé)
 
 Priorité décroissante :
 
-1. **`PickupStateSelector` extraction** — Sprint 6 a ramené le handler
-   Pickup à 485 lignes. `selectStateInDialog` (~65 L, `page.evaluate` de
-   state search) reste extractible. Priorité relevée après Sprint 14
-   car le chantier Payment est désormais bien avancé (façade Payment
-   à 671 L, 27 % de réduction cumulée depuis Sprint 11).
-2. **`PickupStateSelector` (optionnel)** — Sprint 6 a ramené le handler
-   à 485 lignes, sous le seuil. L'extraction de `selectStateInDialog`
-   (~65 L, `page.evaluate` de state search) reste possible si l'on
-   souhaite gagner ~13 % supplémentaires, mais n'est plus prioritaire.
-3. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
+1. **Réduire `PickupDialogHandler.ts` sous 400 L** (optionnel) —
+   Sprint 15 a ramené le handler à 406 L via `PickupStateSelector`
+   (cumul Sprint 5+6+15 = −44 %). L'extraction restante potentielle est
+   `fillByLabelInDialog` (~75 L, 2 stratégies retries). Non prioritaire
+   car le seuil ~500 L est largement respecté.
+2. **Réduire `CheckoutShippingPage.ts` sous 700 L** (optionnel) — Sprint 7
    a ramené à 751 L. Reste extractible : `SelectClickAndCollectHelper`
    (~160 L couvrant l'ouverture du panel pickup avec ses 3 fallbacks) et
    éventuellement `ShippingMethodSelector` (~70 L). Non prioritaire car
    déjà sous le seuil 800.
-4. **`storageState` par région** — global-setup persistant pour supprimer
+3. **`storageState` par région** — global-setup persistant pour supprimer
    le login registered à chaque test (gain ~5-8 s / test / région).
-5. **Split du mégatest** — découper `celine-purchase.spec.ts` en
+4. **Split du mégatest** — découper `celine-purchase.spec.ts` en
    `product.spec.ts`, `checkout-login.spec.ts`, `checkout-shipping.spec.ts`,
    `checkout-payment.spec.ts`, `checkout-confirmation.spec.ts`.
-6. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
+5. **10 `waitForTimeout` Shipping+PickupDialogHandler+PickupRefillGuard** —
    remplacer par des signaux réels maintenant que le scope pickup est
    entièrement scindé en trois helpers ciblés (handler, civility, refill
    guard) et que le scope adresse est isolé dans `AddressFormFiller`.
    Chaque sleep a désormais un contexte local suffisamment étroit pour
    identifier un signal DOM/URL fiable.
-7. **Flakes `tests/unit/fileLock.spec.ts:114` et
+6. **Flakes `tests/unit/fileLock.spec.ts:114` et
    `tests/unit/testResultTracker.spec.ts:66`** — deux tests
    cross-process (`cross-process contention preserves all writes` et
    `cross-process concurrent record() preserves all entries`) échouent
    occasionnellement (~10-20 %). Race probable dans le `child_process`
    spawn — même famille. À investiguer isolément.
-8. **Warnings ESLint révélés post-Sprint 11** — la suppression de
+7. **Warnings ESLint révélés post-Sprint 11** — la suppression de
    l'override rend visibles quelques warnings préexistants qui étaient
    masqués : `preserve-caught-error` sur `CheckoutShippingPage.ts:415` et
    `celine-purchase.spec.ts:202`, `no-useless-assignment` sur
@@ -584,22 +598,22 @@ Priorité décroissante :
    du mégatest (§5) et le refactor Payment (§1). Idem : nettoyer
    l'`unused-disable` sur `scripts/check-silent-catch-baseline.js:2` et
    les 2 `no-explicit-any` sur `emailReporter.ts:479` + `formHelper.ts:400`.
-9. **Warning tsc pré-existant `_buyNowUsed` dans
+8. **Warning tsc pré-existant `_buyNowUsed` dans
    `tests/celine-purchase.spec.ts`** — la variable est assignée mais
    jamais lue post-assignation (héritage historique). L'ESLint
    `varsIgnorePattern: '^_'` la tolère ; `tsc --noEmit` la signale en
    diagnostic informationnel mais ne fail pas. À nettoyer au fil du
    split du mégatest (§5).
-10. **Duplication `safeClick`/`safeFill`/`safeSelect`/`isVisible`** —
-    `AddressFormFiller` réimplémente localement les primitives BasePage
-    (Sprint 7). À reconsidérer si un pattern de partage émerge côté
-    Payment/Login helpers ; sinon, laisser les duplications comme prix
-    de l'isolation forte.
-11. **`swallowOptional` historique dans `CheckoutShippingPage.ts`** —
+9. **Duplication `safeClick`/`safeFill`/`safeSelect`/`isVisible`** —
+   `AddressFormFiller` réimplémente localement les primitives BasePage
+   (Sprint 7). À reconsidérer si un pattern de partage émerge côté
+   Payment/Login helpers ; sinon, laisser les duplications comme prix
+   de l'isolation forte.
+10. **`swallowOptional` historique dans `CheckoutShippingPage.ts`** —
     encore basé sur `.message` / `String(err)`. Non touché en Sprint 11
     (hors périmètre — utilisé par ~15 sites). À migrer vers `errorName`
     au fil du prochain refactor structurel de la façade.
-12. **Historique Git** — purger `.claude/settings.local.json` et
+11. **Historique Git** — purger `.claude/settings.local.json` et
     `%TEMP%install-qwen.bat` (voir §9), après validation humaine.
 
 ---
