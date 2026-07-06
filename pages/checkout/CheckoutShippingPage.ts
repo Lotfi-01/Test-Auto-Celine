@@ -10,6 +10,7 @@ import { ShippingMethodSelector } from './shipping/ShippingMethodSelector';
 import { ShippingPostalCodeHandler } from './shipping/ShippingPostalCodeHandler';
 import { ContinueToShippingHandler } from './shipping/ContinueToShippingHandler';
 import { ContinueToPaymentHandler } from './shipping/ContinueToPaymentHandler';
+import { ClickSubmitShippingHandler } from './shipping/ClickSubmitShippingHandler';
 
 /**
  * Re-export the address-options interface from its Sprint-7 home so any
@@ -53,6 +54,7 @@ export class CheckoutShippingPage extends BasePage {
   private readonly shippingPostalCodeHandler: ShippingPostalCodeHandler;
   private readonly continueToShippingHandler: ContinueToShippingHandler;
   private readonly continueToPaymentHandler: ContinueToPaymentHandler;
+  private readonly clickSubmitShippingHandler: ClickSubmitShippingHandler;
 
   constructor(page: Page) {
     super(page, 'Shipping');
@@ -149,6 +151,16 @@ export class CheckoutShippingPage extends BasePage {
       continueToPaymentButton: this.continueToPaymentButton,
       safeClick: (locator, options) => this.safeClick(locator, options),
       isVisible: (locator, timeout) => this.isVisible(locator, timeout),
+    });
+
+    // Sprint 23 — Submit-shipping button click extracted to
+    // `ClickSubmitShippingHandler`. Receives `page`, the
+    // `submitShippingButton` anchor, and a bound `safeClick` callback.
+    // Behavior preserved 1:1.
+    this.clickSubmitShippingHandler = new ClickSubmitShippingHandler({
+      page,
+      submitShippingButton: this.submitShippingButton,
+      safeClick: (locator, options) => this.safeClick(locator, options),
     });
   }
 
@@ -349,50 +361,10 @@ export class CheckoutShippingPage extends BasePage {
    * when address is pre-filled).
    */
   async clickSubmitShipping(): Promise<boolean> {
-    try {
-      // Aggressively close any interfering side panels first (critical for registered flow)
-      const { closeAllSidePanels } = await import('../../utils/selectorStrategy');
-      await closeAllSidePanels(this.page, { timeout: 50, force: true });
-
-      // For registered prefilled, the button can be in DOM but reported hidden by visibility checks (CSS/overlay).
-      // Wait attached first, then attempt force/JS click without strict visible requirement.
-      await this.submitShippingButton.waitFor({ state: 'attached', timeout: TIMEOUTS.medium })
-        .catch(this.swallowOptional('submitShippingButton waitFor attached'));
-
-      const isAttached = await this.submitShippingButton.count().then(c => c > 0).catch(() => false);
-      if (!isAttached) {
-        this.log('Submit shipping button not present', 'warn');
-        return false;
-      }
-
-      // Scroll + force/JS click path (preferred for prefilled registered case)
-      await this.submitShippingButton.scrollIntoViewIfNeeded().catch(this.swallowOptional('submitShippingButton scrollIntoView'));
-
-      let clicked = await this.safeClick(this.submitShippingButton, { timeout: TIMEOUTS.short, force: true });
-
-      if (!clicked) {
-        await this.submitShippingButton.evaluate((el: HTMLElement) => (el as HTMLButtonElement).click())
-          .catch(this.swallowOptional('submitShippingButton JS click fallback'));
-        clicked = true;
-      }
-
-      if (clicked) {
-        this.logSuccess('Submit shipping button clicked (#submitShippingBtn)');
-      }
-
-      // Sprint 3: the previous `waitForTimeout(150)` was blind padding. The
-      // real signal after a form submit is the document reaching
-      // `domcontentloaded`. Timeout is bounded so a stuck submit still surfaces
-      // via the caller's own next assertion, not a silent sleep.
-      await this.page
-        .waitForLoadState('domcontentloaded', { timeout: 1000 })
-        .catch(this.swallowOptional('post submit-shipping DOM settle'));
-
-      return clicked;
-    } catch (e) {
-      this.log(`Failed to click submit shipping: ${(e as Error).message}`, 'warn');
-      return false;
-    }
+    // Sprint 23: full body extracted to `ClickSubmitShippingHandler`.
+    // Public signature and return contract preserved 1:1
+    // (Promise<boolean>, 3 return paths, never throws).
+    return this.clickSubmitShippingHandler.click();
   }
 
 }
